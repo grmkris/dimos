@@ -27,6 +27,7 @@ Each frame is JPEG-encoded and POSTed (with the robot's odom pose) to robomoo's
     ROBOT_INGEST_TOKEN=<secret matching the server>
 """
 
+import math
 import os
 import threading
 import time
@@ -41,6 +42,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.navigation.frontier_exploration.frontier_explorer_spec import (
     FrontierExplorerSpec,
@@ -71,8 +73,13 @@ class TakePictureSkill(Module):
     # tilt_and_capture aim the body-fixed camera without owning the connection.
     _tilt: TiltSpec
     # Auto-wired (structurally) to UnitreeSkillContainer.relative_move — lets
-    # room_scan rotate/translate the robot without owning the navigation stack.
+    # room_scan translate the robot (real-distance moves) without owning the
+    # navigation stack.
     _move: MoveSpec
+    # Direct base velocity (same stream person_follow drives). room_scan rotates
+    # in place via cmd_vel because the global planner can't handle a heading-only
+    # goal (it sees the goal at the current XY and aborts as "already arrived").
+    cmd_vel: Out[Twist]
 
     @rpc
     def start(self) -> None:
@@ -90,6 +97,11 @@ class TakePictureSkill(Module):
     @rpc
     def stop(self) -> None:
         self._capture_stop.set()
+        # Leave the base still if a scan was mid-rotation.
+        try:
+            self.cmd_vel.publish(Twist.zero())
+        except Exception:  # noqa: BLE001 — best effort on shutdown
+            pass
         thread = getattr(self, "_capture_thread", None)
         if thread is not None and thread.is_alive():
             thread.join(timeout=5.0)
@@ -410,17 +422,60 @@ class TakePictureSkill(Module):
                             count += 1
                     except Exception as e:  # noqa: BLE001 — keep sweeping on transient errors
                         logger.warning("room_scan upload failed: %s", e)
-                    # Rotate to the next angle. The final increment of the final
-                    # stop is skipped (we close the 360 only when continuing).
+                    # Rotate in place to the next angle (via cmd_vel — the global
+                    # planner can't do a heading-only goal). The final increment of
+                    # the final stop is skipped (we close the 360 only to continue).
                     if i < steps - 1 or pos < positions - 1:
-                        self._move.relative_move(degrees=angle_step_deg)
-                # Move to the next stop; stop early if we can't get there.
+                        self._rotate_in_place(angle_step_deg)
+                # Move to the next stop, then turn to fan out. Translation goes
+                # through the planner (real distance); the turn uses cmd_vel. Stop
+                # early if the forward move couldn't complete.
                 if pos < positions - 1:
-                    result = self._move.relative_move(
-                        forward=forward_step_m, degrees=turn_between_deg
-                    )
+                    result = self._move.relative_move(forward=forward_step_m)
                     if "reached" not in result.lower():
                         logger.info("room_scan stopping early: move result %r", result)
                         break
+                    self._rotate_in_place(turn_between_deg)
         finally:
+            try:
+                self.cmd_vel.publish(Twist.zero())
+            except Exception:  # noqa: BLE001 — best effort
+                pass
             logger.info("room_scan finished (run=%s): uploaded %d photos", run, count)
+
+    def _rotate_in_place(
+        self,
+        deg: float,
+        max_rate: float = 0.6,
+        min_rate: float = 0.15,
+        tol_deg: float = 3.0,
+        timeout_s: float = 12.0,
+    ) -> None:
+        """Turn the base by `deg` degrees (closed-loop on odom yaw) via cmd_vel.
+
+        +deg turns left (CCW), matching relative_move's convention. Holds the
+        loop until the heading is within `tol_deg` or `timeout_s` elapses, then
+        stops the base. No-op if there's no odometry yet.
+        """
+        pose = getattr(self, "_pose", None)
+        if pose is None:
+            logger.warning("room_scan rotate skipped: no odometry yet")
+            return
+        target = pose.yaw + math.radians(deg)
+        deadline = time.monotonic() + timeout_s
+        tol = math.radians(tol_deg)
+        try:
+            while not self._capture_stop.is_set():
+                cur = getattr(self, "_pose", None)
+                cur_yaw = cur.yaw if cur is not None else target
+                # Shortest signed angular error in (-pi, pi].
+                err = math.atan2(math.sin(target - cur_yaw), math.cos(target - cur_yaw))
+                if abs(err) <= tol or time.monotonic() > deadline:
+                    break
+                # Proportional, clamped, with a floor so it doesn't stall near zero.
+                rate = max(min_rate, min(max_rate, abs(err) * 1.5))
+                wz = math.copysign(rate, err)
+                self.cmd_vel.publish(Twist(linear=[0.0, 0.0, 0.0], angular=[0.0, 0.0, wz]))
+                self._capture_stop.wait(0.05)
+        finally:
+            self.cmd_vel.publish(Twist.zero())
