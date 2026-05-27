@@ -446,16 +446,21 @@ class TakePictureSkill(Module):
     def _rotate_in_place(
         self,
         deg: float,
-        max_rate: float = 0.6,
-        min_rate: float = 0.15,
-        tol_deg: float = 3.0,
-        timeout_s: float = 12.0,
+        max_rate: float = 1.0,
+        min_rate: float = 0.5,
+        tol_deg: float = 4.0,
+        timeout_s: float = 8.0,
     ) -> None:
         """Turn the base by `deg` degrees (closed-loop on odom yaw) via cmd_vel.
 
         +deg turns left (CCW), matching relative_move's convention. Holds the
         loop until the heading is within `tol_deg` or `timeout_s` elapses, then
         stops the base. No-op if there's no odometry yet.
+
+        `min_rate` is kept high (0.5 rad/s) on purpose: the Twist maps to a
+        normalized wireless-joystick axis on the Go2, and small commands sit
+        below the robot's deadband and produce NO motion. person_follow drives
+        the same stream at up to 0.8 rad/s — so we stay in that band.
         """
         pose = getattr(self, "_pose", None)
         if pose is None:
@@ -472,8 +477,9 @@ class TakePictureSkill(Module):
                 err = math.atan2(math.sin(target - cur_yaw), math.cos(target - cur_yaw))
                 if abs(err) <= tol or time.monotonic() > deadline:
                     break
-                # Proportional, clamped, with a floor so it doesn't stall near zero.
-                rate = max(min_rate, min(max_rate, abs(err) * 1.5))
+                # Proportional, clamped, with a floor that stays above the Go2's
+                # joystick deadband so the base actually turns.
+                rate = max(min_rate, min(max_rate, abs(err) * 3.0))
                 wz = math.copysign(rate, err)
                 self.cmd_vel.publish(Twist(linear=[0.0, 0.0, 0.0], angular=[0.0, 0.0, wz]))
                 self._capture_stop.wait(0.05)
