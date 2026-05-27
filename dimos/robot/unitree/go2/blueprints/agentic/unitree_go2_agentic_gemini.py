@@ -15,10 +15,11 @@
 
 from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
+from dimos.agents.skills.agent_command_endpoint import AgentCommandEndpoint
 from dimos.agents.skills.gemini_speak_skill import GeminiSpeakSkill
+from dimos.agents.skills.map_uploader import MapUploader
 from dimos.agents.skills.navigation import NavigationSkillContainer
 from dimos.agents.skills.person_follow import PersonFollowSkillContainer
-from dimos.agents.skills.map_uploader import MapUploader
 from dimos.agents.skills.speak_skill import SpeakSkill
 from dimos.agents.skills.take_picture_skill import TakePictureSkill
 from dimos.core.coordination.blueprints import autoconnect
@@ -57,6 +58,7 @@ unitree_go2_agentic_gemini = (
         GeminiSpeakSkill.blueprint(),
         TakePictureSkill.blueprint(),
         MapUploader.blueprint(),
+        AgentCommandEndpoint.blueprint(),
     )
     .global_config(detection_model="gemini")
     .disabled_modules(SecurityModule, SpeakSkill)
