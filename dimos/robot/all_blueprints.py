@@ -95,6 +95,7 @@ all_blueprints = {
     "unitree-go2": "dimos.robot.unitree.go2.blueprints.smart.unitree_go2:unitree_go2",
     "unitree-go2-agentic": "dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_agentic:unitree_go2_agentic",
     "unitree-go2-agentic-gemini": "dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_agentic_gemini:unitree_go2_agentic_gemini",
+    "unitree-go2-agentic-gemini-rooms": "dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_agentic_gemini_rooms:unitree_go2_agentic_gemini_rooms",
     "unitree-go2-agentic-huggingface": "dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_agentic_huggingface:unitree_go2_agentic_huggingface",
     "unitree-go2-agentic-ollama": "dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_agentic_ollama:unitree_go2_agentic_ollama",
     "unitree-go2-basic": "dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic:unitree_go2_basic",
