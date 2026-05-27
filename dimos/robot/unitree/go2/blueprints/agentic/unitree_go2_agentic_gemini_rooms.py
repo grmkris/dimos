@@ -22,12 +22,17 @@ Extends `unitree_go2_agentic_gemini` with:
     the saved map's frame. Started "mapless"; a map is loaded at runtime.
   - RoomManager: agent skills to be TOLD the room (`set_room`) or GUESS it
     (`guess_room`, by scoring the live scan against each registered room map).
+  - MapSaverSkill: `save_map` to persist the map built in a live session to a
+    reusable .pc2.lcm (the live-session counterpart to `dimos export-premap`),
+    plus `list_maps`. Lets a room map be created on-device, then registered in
+    rooms.yaml for later relocalization.
 
 So every run in a room shares that room's coordinate frame instead of a fresh
-origin per boot. Per-room maps are built once with `dimos export-premap` and
-listed in `data/rooms.yaml`.
+origin per boot. Per-room maps are built once (with `dimos export-premap` or the
+`save_map` skill) and listed in `data/rooms.yaml`.
 """
 
+from dimos.agents.skills.map_saver_skill import MapSaverSkill
 from dimos.agents.skills.room_manager import RoomManager
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.mapping.relocalization.module import RelocalizationModule
@@ -39,6 +44,7 @@ unitree_go2_agentic_gemini_rooms = autoconnect(
     unitree_go2_agentic_gemini,
     RelocalizationModule.blueprint(),
     RoomManager.blueprint(),
+    MapSaverSkill.blueprint(),
 ).global_config(n_workers=12)
 
 __all__ = ["unitree_go2_agentic_gemini_rooms"]
