@@ -342,7 +342,7 @@ class TakePictureSkill(Module):
         forward_step_m: float = 1.0,
         turn_between_deg: float = 60.0,
         angle_step_deg: float = 10.0,
-        settle_s: float = 0.8,
+        spin_rate: float = 0.9,
         note: str = "vr_scan",
     ) -> SkillResult:
         """Capture image data to reconstruct the room in VR / 3D.
@@ -375,7 +375,7 @@ class TakePictureSkill(Module):
         self._capture_thread = threading.Thread(
             target=self._room_scan_loop,
             args=(run, positions, forward_step_m, turn_between_deg, angle_step_deg,
-                  settle_s, note),
+                  spin_rate, note),
             daemon=True,
             name="room-scan",
         )
@@ -393,113 +393,137 @@ class TakePictureSkill(Module):
         forward_step_m: float,
         turn_between_deg: float,
         angle_step_deg: float,
-        settle_s: float,
+        spin_rate: float,
         note: str,
     ) -> None:
         steps = round(360 / angle_step_deg)
-        count = 0
+        total = 0
         try:
             for pos in range(positions):
                 if self._capture_stop.is_set():
                     break
-                for i in range(steps):
-                    if self._capture_stop.is_set():
-                        return
-                    # Hold still so the frame isn't motion-blurred.
-                    self._capture_stop.wait(settle_s)
-                    angle = i * angle_step_deg
-                    try:
-                        if self._upload_current(
-                            note=note,
-                            label=f"{run}/pos{pos:02d}/{int(angle):03d}",
-                            extra={
-                                "run": run,
-                                "position": str(pos),
-                                "angle": str(angle),
-                                "imageIndex": str(pos * steps + i),
-                            },
-                        ):
-                            count += 1
-                    except Exception as e:  # noqa: BLE001 — keep sweeping on transient errors
-                        logger.warning("room_scan upload failed: %s", e)
-                    # Rotate in place to the next angle (via cmd_vel — the global
-                    # planner can't do a heading-only goal). The final increment of
-                    # the final stop is skipped (we close the 360 only to continue).
-                    if i < steps - 1 or pos < positions - 1:
-                        self._rotate_in_place(angle_step_deg)
+                total += self._sweep_capture(run, pos, steps, angle_step_deg, spin_rate, note)
                 # Move to the next stop, then turn to fan out. Translation goes
-                # through the planner (real distance); the turn uses cmd_vel. Stop
-                # early if the forward move couldn't complete.
+                # through the planner (real distance); the turn is a cmd_vel spin.
+                # Stop early if the forward move couldn't complete.
                 if pos < positions - 1:
                     result = self._move.relative_move(forward=forward_step_m)
                     if "reached" not in result.lower():
                         logger.info("room_scan stopping early: move result %r", result)
                         break
-                    self._rotate_in_place(turn_between_deg)
+                    self._spin_by(turn_between_deg, spin_rate)
         finally:
             try:
                 self.cmd_vel.publish(Twist.zero())
             except Exception:  # noqa: BLE001 — best effort
                 pass
-            logger.info("room_scan finished (run=%s): uploaded %d photos", run, count)
+            logger.info("room_scan finished (run=%s): uploaded %d photos", run, total)
 
-    def _rotate_in_place(
-        self,
-        deg: float,
-        max_rate: float = 1.0,
-        min_rate: float = 0.5,
-        tol_deg: float = 4.0,
-        timeout_s: float = 8.0,
-    ) -> None:
-        """Turn the base by `deg` degrees (closed-loop on odom yaw) via cmd_vel.
+    def _sweep_capture(
+        self, run: str, pos: int, steps: int, angle_step_deg: float, rate: float, note: str
+    ) -> int:
+        """Spin a full turn at `pos`, snapping a photo every `angle_step_deg`.
 
-        +deg turns left (CCW), matching relative_move's convention. Holds the
-        loop until the heading is within `tol_deg` or `timeout_s` elapses, then
-        stops the base. No-op if there's no odometry yet.
-
-        `min_rate` is kept high (0.5 rad/s) on purpose: the Twist maps to a
-        normalized wireless-joystick axis on the Go2, and small commands sit
-        below the robot's deadband and produce NO motion. person_follow drives
-        the same stream at up to 0.8 rad/s — so we stay in that band.
+        One continuous cmd_vel spin (not 36 stop-start nudges): we publish a
+        steady yaw rate and, each time odom yaw has advanced another step, fire
+        off a (background) upload tagged with the nominal heading. Capture keys
+        off the *actual* odom rotation, so the exact spin speed doesn't matter —
+        the Go2 heavily attenuates the commanded rate, but we still get `steps`
+        frames spread across the real 360. Returns the number captured.
         """
         pose = getattr(self, "_pose", None)
         if pose is None:
-            logger.warning("room_scan rotate skipped: no odometry yet")
-            return
-        start_yaw = pose.yaw
-        target = start_yaw + math.radians(deg)
-        deadline = time.monotonic() + timeout_s
+            logger.warning("room_scan sweep skipped: no odometry yet")
+            return 0
+        # Anchor frame at heading 0 while still settled (sharpest of the set).
+        self._capture_at(run, pos, 0, steps, 0, note)
+        captured = 1
+        prev = pose.yaw
+        accumulated = 0.0  # total |yaw| turned so far (radians)
+        step = math.radians(angle_step_deg)
         started = time.monotonic()
-        tol = math.radians(tol_deg)
-        iters = 0
-        cur_yaw = start_yaw
-        reason = "reached"
+        # Generous safety cap: the dog turns far slower than commanded, so allow
+        # ~10x the ideal spin time before giving up with whatever we have.
+        deadline = started + max(60.0, (2 * math.pi / max(rate, 0.05)) * 10.0)
         try:
-            while not self._capture_stop.is_set():
-                cur = getattr(self, "_pose", None)
-                cur_yaw = cur.yaw if cur is not None else target
-                # Shortest signed angular error in (-pi, pi].
-                err = math.atan2(math.sin(target - cur_yaw), math.cos(target - cur_yaw))
-                if abs(err) <= tol:
-                    break
+            while captured < steps and not self._capture_stop.is_set():
                 if time.monotonic() > deadline:
-                    reason = "timeout"
+                    logger.warning("room_scan sweep timed out at %d/%d", captured, steps)
                     break
-                # Proportional, clamped, with a floor that stays above the Go2's
-                # joystick deadband so the base actually turns.
-                rate = max(min_rate, min(max_rate, abs(err) * 3.0))
-                wz = math.copysign(rate, err)
-                self.cmd_vel.publish(Twist(linear=[0.0, 0.0, 0.0], angular=[0.0, 0.0, wz]))
-                iters += 1
+                self.cmd_vel.publish(Twist(linear=[0.0, 0.0, 0.0], angular=[0.0, 0.0, rate]))
                 self._capture_stop.wait(0.05)
+                cur = getattr(self, "_pose", None)
+                cur_yaw = cur.yaw if cur is not None else prev
+                accumulated += abs(math.atan2(math.sin(cur_yaw - prev), math.cos(cur_yaw - prev)))
+                prev = cur_yaw
+                while captured < steps and accumulated + 1e-6 >= captured * step:
+                    self._capture_at(run, pos, captured, steps, round(captured * angle_step_deg), note)
+                    captured += 1
         finally:
             self.cmd_vel.publish(Twist.zero())
-        achieved = math.degrees(math.atan2(math.sin(cur_yaw - start_yaw), math.cos(cur_yaw - start_yaw)))
         logger.info(
-            "rotate cmd=%.1f achieved=%.1f deg in %.2fs iters=%d reason=%s",
-            deg,
-            achieved,
-            time.monotonic() - started,
-            iters,
-            reason,
+            "room_scan sweep pos=%d captured=%d/%d turned=%.0f deg in %.1fs",
+            pos, captured, steps, math.degrees(accumulated), time.monotonic() - started,
         )
+        return captured
+
+    def _capture_at(
+        self, run: str, pos: int, idx: int, steps: int, angle_deg: float, note: str
+    ) -> None:
+        """Snapshot the latest frame/pose now and upload it (fire-and-forget).
+
+        Tagged with run/position/angle so the server can group one panorama per
+        position. Background upload keeps the spin loop from stalling on I/O.
+        """
+        frame = getattr(self, "_latest", None)
+        pose = getattr(self, "_pose", None)
+        extra = {
+            "run": run,
+            "position": str(pos),
+            "angle": str(int(angle_deg)),
+            "imageIndex": str(pos * steps + idx),
+        }
+        label = f"{run}/pos{pos:02d}/{int(angle_deg):03d}"
+
+        def _bg() -> None:
+            try:
+                self._upload_frame(frame, pose, note=note, label=label, extra=extra)
+            except Exception:  # noqa: BLE001 — fire-and-forget: failures only logged
+                logger.exception("room_scan upload failed")
+
+        t = threading.Thread(target=_bg, daemon=True, name="room-scan-upload")
+        with self._uploads_lock:
+            self._uploads = [u for u in self._uploads if u.is_alive()]
+            self._uploads.append(t)
+        t.start()
+
+    def _spin_by(self, deg: float, rate: float) -> None:
+        """Spin the base by ~`deg` degrees via a continuous cmd_vel yaw command.
+
+        Open-loop on the commanded direction, closed-loop on the *amount*: we
+        publish a steady rate and stop once odom shows we've turned `deg`. Used
+        for the fan-out turn between stops. +deg = left (CCW). No-op without odom.
+        """
+        pose = getattr(self, "_pose", None)
+        if pose is None:
+            logger.warning("room_scan spin skipped: no odometry yet")
+            return
+        goal = math.radians(abs(deg))
+        signed_rate = math.copysign(rate, deg)
+        prev = pose.yaw
+        accumulated = 0.0
+        started = time.monotonic()
+        deadline = started + max(20.0, (goal / max(rate, 0.05)) * 10.0)
+        try:
+            while accumulated < goal and not self._capture_stop.is_set():
+                if time.monotonic() > deadline:
+                    break
+                self.cmd_vel.publish(Twist(linear=[0.0, 0.0, 0.0], angular=[0.0, 0.0, signed_rate]))
+                self._capture_stop.wait(0.05)
+                cur = getattr(self, "_pose", None)
+                cur_yaw = cur.yaw if cur is not None else prev
+                accumulated += abs(math.atan2(math.sin(cur_yaw - prev), math.cos(cur_yaw - prev)))
+                prev = cur_yaw
+        finally:
+            self.cmd_vel.publish(Twist.zero())
+        logger.info("room_scan spin cmd=%.0f turned=%.0f deg", deg, math.degrees(accumulated))
