@@ -466,22 +466,40 @@ class TakePictureSkill(Module):
         if pose is None:
             logger.warning("room_scan rotate skipped: no odometry yet")
             return
-        target = pose.yaw + math.radians(deg)
+        start_yaw = pose.yaw
+        target = start_yaw + math.radians(deg)
         deadline = time.monotonic() + timeout_s
+        started = time.monotonic()
         tol = math.radians(tol_deg)
+        iters = 0
+        cur_yaw = start_yaw
+        reason = "reached"
         try:
             while not self._capture_stop.is_set():
                 cur = getattr(self, "_pose", None)
                 cur_yaw = cur.yaw if cur is not None else target
                 # Shortest signed angular error in (-pi, pi].
                 err = math.atan2(math.sin(target - cur_yaw), math.cos(target - cur_yaw))
-                if abs(err) <= tol or time.monotonic() > deadline:
+                if abs(err) <= tol:
+                    break
+                if time.monotonic() > deadline:
+                    reason = "timeout"
                     break
                 # Proportional, clamped, with a floor that stays above the Go2's
                 # joystick deadband so the base actually turns.
                 rate = max(min_rate, min(max_rate, abs(err) * 3.0))
                 wz = math.copysign(rate, err)
                 self.cmd_vel.publish(Twist(linear=[0.0, 0.0, 0.0], angular=[0.0, 0.0, wz]))
+                iters += 1
                 self._capture_stop.wait(0.05)
         finally:
             self.cmd_vel.publish(Twist.zero())
+        achieved = math.degrees(math.atan2(math.sin(cur_yaw - start_yaw), math.cos(cur_yaw - start_yaw)))
+        logger.info(
+            "rotate cmd=%.1f achieved=%.1f deg in %.2fs iters=%d reason=%s",
+            deg,
+            achieved,
+            time.monotonic() - started,
+            iters,
+            reason,
+        )
