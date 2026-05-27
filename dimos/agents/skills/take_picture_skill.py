@@ -45,6 +45,7 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.navigation.frontier_exploration.frontier_explorer_spec import (
     FrontierExplorerSpec,
 )
+from dimos.robot.unitree.move_spec import MoveSpec
 from dimos.robot.unitree.tilt_spec import TiltSpec
 from dimos.utils.logging_config import setup_logger
 
@@ -69,6 +70,9 @@ class TakePictureSkill(Module):
     # Auto-wired (structurally) to UnitreeSkillContainer.tilt_body — lets
     # tilt_and_capture aim the body-fixed camera without owning the connection.
     _tilt: TiltSpec
+    # Auto-wired (structurally) to UnitreeSkillContainer.relative_move — lets
+    # room_scan rotate/translate the robot without owning the navigation stack.
+    _move: MoveSpec
 
     @rpc
     def start(self) -> None:
@@ -113,6 +117,7 @@ class TakePictureSkill(Module):
         pose: PoseStamped | None,
         note: str = "",
         label: str = "",
+        extra: dict[str, str] | None = None,
     ) -> str | None:
         if frame is None:
             return None
@@ -128,6 +133,9 @@ class TakePictureSkill(Module):
         if pose is not None:
             data["poseX"] = str(pose.position.x)
             data["poseY"] = str(pose.position.y)
+        # Extra grouping tags (e.g. run / position / angle for room_scan).
+        if extra:
+            data.update(extra)
 
         resp = httpx.post(
             f"{self.config.robomoo_url.rstrip('/')}/api/robot/frame",
@@ -140,12 +148,15 @@ class TakePictureSkill(Module):
         return resp.json().get("key", "")
 
     # Thin wrapper used by the explore capture loop: upload the latest frame/pose.
-    def _upload_current(self, note: str = "", label: str = "") -> str | None:
+    def _upload_current(
+        self, note: str = "", label: str = "", extra: dict[str, str] | None = None
+    ) -> str | None:
         return self._upload_frame(
             getattr(self, "_latest", None),
             getattr(self, "_pose", None),
             note=note,
             label=label,
+            extra=extra,
         )
 
     @skill
@@ -310,3 +321,106 @@ class TakePictureSkill(Module):
             except Exception:  # noqa: BLE001 — best effort on shutdown
                 pass
             logger.info("explore_and_capture finished: uploaded %d photos", count)
+
+    @skill
+    def room_scan(
+        self,
+        run_id: str = "",
+        positions: int = 3,
+        forward_step_m: float = 1.0,
+        turn_between_deg: float = 60.0,
+        angle_step_deg: float = 10.0,
+        settle_s: float = 0.8,
+        note: str = "vr_scan",
+    ) -> SkillResult:
+        """Capture image data to reconstruct the room in VR / 3D.
+
+        At each stop the robot does a full 360-degree sweep, taking one photo
+        every `angle_step_deg` degrees (10 -> 36 photos), then moves
+        `forward_step_m` meters forward and turns `turn_between_deg` degrees so it
+        fans out across the room (rather than walking a straight line), and
+        repeats for up to `positions` stops. It stops early if it can't move
+        forward (obstacle / navigation failure). Every photo is tagged with the
+        run id, the position index and the angle so they can be grouped
+        server-side (one panorama per position). Runs in the background and
+        returns immediately. The robot should be standing first.
+        """
+        if getattr(self, "_latest", None) is None:
+            return SkillResult.fail("NO_FRAME", "No camera frame received yet")
+        if not self._configured():
+            return SkillResult.fail(
+                "NOT_CONFIGURED", "ROBOMOO_URL / ROBOT_INGEST_TOKEN not set"
+            )
+
+        run = run_id or f"scan-{int(time.time())}"
+
+        # Cancel any in-flight scan/explore capture before starting a new one.
+        self._capture_stop.set()
+        if self._capture_thread is not None and self._capture_thread.is_alive():
+            self._capture_thread.join(timeout=5.0)
+        self._capture_stop = threading.Event()
+
+        self._capture_thread = threading.Thread(
+            target=self._room_scan_loop,
+            args=(run, positions, forward_step_m, turn_between_deg, angle_step_deg,
+                  settle_s, note),
+            daemon=True,
+            name="room-scan",
+        )
+        self._capture_thread.start()
+
+        return SkillResult.ok(
+            f"Scanning the room for VR (run={run}): up to {positions} stops, "
+            f"{round(360 / angle_step_deg)} photos per stop. Running in the background."
+        )
+
+    def _room_scan_loop(
+        self,
+        run: str,
+        positions: int,
+        forward_step_m: float,
+        turn_between_deg: float,
+        angle_step_deg: float,
+        settle_s: float,
+        note: str,
+    ) -> None:
+        steps = round(360 / angle_step_deg)
+        count = 0
+        try:
+            for pos in range(positions):
+                if self._capture_stop.is_set():
+                    break
+                for i in range(steps):
+                    if self._capture_stop.is_set():
+                        return
+                    # Hold still so the frame isn't motion-blurred.
+                    self._capture_stop.wait(settle_s)
+                    angle = i * angle_step_deg
+                    try:
+                        if self._upload_current(
+                            note=note,
+                            label=f"{run}/pos{pos:02d}/{int(angle):03d}",
+                            extra={
+                                "run": run,
+                                "position": str(pos),
+                                "angle": str(angle),
+                                "imageIndex": str(pos * steps + i),
+                            },
+                        ):
+                            count += 1
+                    except Exception as e:  # noqa: BLE001 — keep sweeping on transient errors
+                        logger.warning("room_scan upload failed: %s", e)
+                    # Rotate to the next angle. The final increment of the final
+                    # stop is skipped (we close the 360 only when continuing).
+                    if i < steps - 1 or pos < positions - 1:
+                        self._move.relative_move(degrees=angle_step_deg)
+                # Move to the next stop; stop early if we can't get there.
+                if pos < positions - 1:
+                    result = self._move.relative_move(
+                        forward=forward_step_m, degrees=turn_between_deg
+                    )
+                    if "reached" not in result.lower():
+                        logger.info("room_scan stopping early: move result %r", result)
+                        break
+        finally:
+            logger.info("room_scan finished (run=%s): uploaded %d photos", run, count)
