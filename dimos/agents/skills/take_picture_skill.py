@@ -42,12 +42,10 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.navigation.frontier_exploration.frontier_explorer_spec import (
     FrontierExplorerSpec,
 )
-from dimos.robot.unitree.move_spec import MoveSpec
 from dimos.robot.unitree.tilt_spec import TiltSpec
 from dimos.utils.logging_config import setup_logger
 
@@ -72,14 +70,6 @@ class TakePictureSkill(Module):
     # Auto-wired (structurally) to UnitreeSkillContainer.tilt_body — lets
     # tilt_and_capture aim the body-fixed camera without owning the connection.
     _tilt: TiltSpec
-    # Auto-wired (structurally) to UnitreeSkillContainer.relative_move — lets
-    # room_scan translate the robot (real-distance moves) without owning the
-    # navigation stack.
-    _move: MoveSpec
-    # Direct base velocity (same stream person_follow drives). room_scan rotates
-    # in place via cmd_vel because the global planner can't handle a heading-only
-    # goal (it sees the goal at the current XY and aborts as "already arrived").
-    cmd_vel: Out[Twist]
 
     @rpc
     def start(self) -> None:
@@ -97,11 +87,6 @@ class TakePictureSkill(Module):
     @rpc
     def stop(self) -> None:
         self._capture_stop.set()
-        # Leave the base still if a scan was mid-rotation.
-        try:
-            self.cmd_vel.publish(Twist.zero())
-        except Exception:  # noqa: BLE001 — best effort on shutdown
-            pass
         thread = getattr(self, "_capture_thread", None)
         if thread is not None and thread.is_alive():
             thread.join(timeout=5.0)
@@ -184,9 +169,7 @@ class TakePictureSkill(Module):
         if frame is None:
             return SkillResult.fail("NO_FRAME", "No camera frame received yet")
         if not self._configured():
-            return SkillResult.fail(
-                "NOT_CONFIGURED", "ROBOMOO_URL / ROBOT_INGEST_TOKEN not set"
-            )
+            return SkillResult.fail("NOT_CONFIGURED", "ROBOMOO_URL / ROBOT_INGEST_TOKEN not set")
 
         # Snapshot the frame + pose now so the background upload sends exactly what
         # the robot saw at call time, not a later frame.
@@ -225,9 +208,7 @@ class TakePictureSkill(Module):
         if getattr(self, "_latest", None) is None:
             return SkillResult.fail("NO_FRAME", "No camera frame received yet")
         if not self._configured():
-            return SkillResult.fail(
-                "NOT_CONFIGURED", "ROBOMOO_URL / ROBOT_INGEST_TOKEN not set"
-            )
+            return SkillResult.fail("NOT_CONFIGURED", "ROBOMOO_URL / ROBOT_INGEST_TOKEN not set")
 
         def _bg() -> None:
             try:
@@ -277,9 +258,7 @@ class TakePictureSkill(Module):
         only a safety cap. Returns immediately; capturing runs in the background.
         """
         if not self._configured():
-            return SkillResult.fail(
-                "NOT_CONFIGURED", "ROBOMOO_URL / ROBOT_INGEST_TOKEN not set"
-            )
+            return SkillResult.fail("NOT_CONFIGURED", "ROBOMOO_URL / ROBOT_INGEST_TOKEN not set")
 
         # Cancel any in-flight run before starting a new one.
         self._capture_stop.set()
@@ -338,31 +317,27 @@ class TakePictureSkill(Module):
     def room_scan(
         self,
         run_id: str = "",
-        positions: int = 3,
-        forward_step_m: float = 1.0,
-        turn_between_deg: float = 60.0,
-        angle_step_deg: float = 10.0,
-        spin_rate: float = 0.9,
+        capture_every_m: float = 0.30,
+        max_frames: int = 120,
+        max_duration_s: float = 600.0,
         note: str = "vr_scan",
     ) -> SkillResult:
-        """Capture image data to reconstruct the room in VR / 3D.
+        """Walk the room capturing frames for 3D/VR (gaussian-splat) reconstruction.
 
-        At each stop the robot does a full 360-degree sweep, taking one photo
-        every `angle_step_deg` degrees (10 -> 36 photos), then moves
-        `forward_step_m` meters forward and turns `turn_between_deg` degrees so it
-        fans out across the room (rather than walking a straight line), and
-        repeats for up to `positions` stops. It stops early if it can't move
-        forward (obstacle / navigation failure). Every photo is tagged with the
-        run id, the position index and the angle so they can be grouped
-        server-side (one panorama per position). Runs in the background and
-        returns immediately. The robot should be standing first.
+        Drives the robot's autonomous exploration so it translates through the
+        space, snapping a photo every ~`capture_every_m` meters of travel. The
+        movement between shots is the point: translation gives the parallax a
+        splat / photogrammetry pipeline needs (spinning in place does not). Each
+        frame is tagged with the run id, a position group, the heading and the
+        robot's world pose so they can be grouped and reconstructed. Stops when
+        the room is explored, `max_frames` are captured, or `max_duration_s`
+        elapses. Runs in the background and returns immediately. The robot should
+        be standing first.
         """
         if getattr(self, "_latest", None) is None:
             return SkillResult.fail("NO_FRAME", "No camera frame received yet")
         if not self._configured():
-            return SkillResult.fail(
-                "NOT_CONFIGURED", "ROBOMOO_URL / ROBOT_INGEST_TOKEN not set"
-            )
+            return SkillResult.fail("NOT_CONFIGURED", "ROBOMOO_URL / ROBOT_INGEST_TOKEN not set")
 
         run = run_id or f"scan-{int(time.time())}"
 
@@ -372,118 +347,94 @@ class TakePictureSkill(Module):
             self._capture_thread.join(timeout=5.0)
         self._capture_stop = threading.Event()
 
+        self.explore_cmd.publish(Bool(data=True))
         self._capture_thread = threading.Thread(
-            target=self._room_scan_loop,
-            args=(run, positions, forward_step_m, turn_between_deg, angle_step_deg,
-                  spin_rate, note),
+            target=self._walk_scan_loop,
+            args=(run, capture_every_m, max_frames, max_duration_s, note),
             daemon=True,
             name="room-scan",
         )
         self._capture_thread.start()
 
         return SkillResult.ok(
-            f"Scanning the room for VR (run={run}): up to {positions} stops, "
-            f"{round(360 / angle_step_deg)} photos per stop. Running in the background."
+            f"Scanning the room for VR (run={run}): exploring and capturing a frame "
+            f"every {capture_every_m:.2f} m of travel (up to {max_frames}). Running "
+            "in the background."
         )
 
-    def _room_scan_loop(
+    def _walk_scan_loop(
         self,
         run: str,
-        positions: int,
-        forward_step_m: float,
-        turn_between_deg: float,
-        angle_step_deg: float,
-        spin_rate: float,
+        capture_every_m: float,
+        max_frames: int,
+        max_duration_s: float,
         note: str,
     ) -> None:
-        steps = round(360 / angle_step_deg)
-        total = 0
+        start = time.monotonic()
+        grace_s = 6.0  # let exploration spin up before trusting the active flag
+        count = 0
+        total_travel = 0.0  # cumulative path length (m), used for position grouping
+        prev_xy: tuple[float, float] | None = None
+        last_capture_xy: tuple[float, float] | None = None
+
+        def _dist(a: tuple[float, float], b: tuple[float, float]) -> float:
+            return math.hypot(a[0] - b[0], a[1] - b[1])
+
         try:
-            for pos in range(positions):
-                if self._capture_stop.is_set():
+            while not self._capture_stop.is_set():
+                elapsed = time.monotonic() - start
+                if elapsed > max_duration_s:
+                    logger.info("room_scan hit max_duration_s cap")
                     break
-                total += self._sweep_capture(run, pos, steps, angle_step_deg, spin_rate, note)
-                # Move to the next stop, then turn to fan out. Translation goes
-                # through the planner (real distance); the turn is a cmd_vel spin.
-                # Stop early if the forward move couldn't complete.
-                if pos < positions - 1:
-                    result = self._move.relative_move(forward=forward_step_m)
-                    if "reached" not in result.lower():
-                        logger.info("room_scan stopping early: move result %r", result)
-                        break
-                    self._spin_by(turn_between_deg, spin_rate)
+                if count >= max_frames:
+                    logger.info("room_scan hit max_frames cap")
+                    break
+                if elapsed > grace_s and not self._exploring():
+                    logger.info("exploration finished — stopping room_scan")
+                    break
+
+                pose = getattr(self, "_pose", None)
+                if pose is not None:
+                    xy = (pose.position.x, pose.position.y)
+                    if prev_xy is not None:
+                        total_travel += _dist(xy, prev_xy)
+                    prev_xy = xy
+                    # First frame immediately, then one per capture_every_m of
+                    # travel from the spot where we last captured.
+                    if last_capture_xy is None or _dist(xy, last_capture_xy) >= capture_every_m:
+                        position = int(total_travel // 1.0)
+                        angle = round(math.degrees(pose.yaw)) % 360
+                        self._dispatch_capture(run, position, count, angle, note)
+                        last_capture_xy = xy
+                        count += 1
+
+                self._capture_stop.wait(0.1)
         finally:
             try:
-                self.cmd_vel.publish(Twist.zero())
-            except Exception:  # noqa: BLE001 — best effort
+                self.stop_explore_cmd.publish(Bool(data=True))
+            except Exception:  # noqa: BLE001 — best effort on shutdown
                 pass
-            logger.info("room_scan finished (run=%s): uploaded %d photos", run, total)
+            logger.info("room_scan finished (run=%s): uploaded %d photos", run, count)
 
-    def _sweep_capture(
-        self, run: str, pos: int, steps: int, angle_step_deg: float, rate: float, note: str
-    ) -> int:
-        """Spin a full turn at `pos`, snapping a photo every `angle_step_deg`.
-
-        One continuous cmd_vel spin (not 36 stop-start nudges): we publish a
-        steady yaw rate and, each time odom yaw has advanced another step, fire
-        off a (background) upload tagged with the nominal heading. Capture keys
-        off the *actual* odom rotation, so the exact spin speed doesn't matter —
-        the Go2 heavily attenuates the commanded rate, but we still get `steps`
-        frames spread across the real 360. Returns the number captured.
-        """
-        pose = getattr(self, "_pose", None)
-        if pose is None:
-            logger.warning("room_scan sweep skipped: no odometry yet")
-            return 0
-        # Anchor frame at heading 0 while still settled (sharpest of the set).
-        self._capture_at(run, pos, 0, steps, 0, note)
-        captured = 1
-        prev = pose.yaw
-        accumulated = 0.0  # total |yaw| turned so far (radians)
-        step = math.radians(angle_step_deg)
-        started = time.monotonic()
-        # Generous safety cap: the dog turns far slower than commanded, so allow
-        # ~10x the ideal spin time before giving up with whatever we have.
-        deadline = started + max(60.0, (2 * math.pi / max(rate, 0.05)) * 10.0)
-        try:
-            while captured < steps and not self._capture_stop.is_set():
-                if time.monotonic() > deadline:
-                    logger.warning("room_scan sweep timed out at %d/%d", captured, steps)
-                    break
-                self.cmd_vel.publish(Twist(linear=[0.0, 0.0, 0.0], angular=[0.0, 0.0, rate]))
-                self._capture_stop.wait(0.05)
-                cur = getattr(self, "_pose", None)
-                cur_yaw = cur.yaw if cur is not None else prev
-                accumulated += abs(math.atan2(math.sin(cur_yaw - prev), math.cos(cur_yaw - prev)))
-                prev = cur_yaw
-                while captured < steps and accumulated + 1e-6 >= captured * step:
-                    self._capture_at(run, pos, captured, steps, round(captured * angle_step_deg), note)
-                    captured += 1
-        finally:
-            self.cmd_vel.publish(Twist.zero())
-        logger.info(
-            "room_scan sweep pos=%d captured=%d/%d turned=%.0f deg in %.1fs",
-            pos, captured, steps, math.degrees(accumulated), time.monotonic() - started,
-        )
-        return captured
-
-    def _capture_at(
-        self, run: str, pos: int, idx: int, steps: int, angle_deg: float, note: str
+    def _dispatch_capture(
+        self, run: str, position: int, image_index: int, angle_deg: int, note: str
     ) -> None:
         """Snapshot the latest frame/pose now and upload it (fire-and-forget).
 
-        Tagged with run/position/angle so the server can group one panorama per
-        position. Background upload keeps the spin loop from stalling on I/O.
+        Tagged with run / position / angle (heading) for grouping; `_upload_frame`
+        also attaches the world pose (poseX/poseY), which is what the
+        reconstruction pipeline cares about. Background upload keeps the capture
+        loop from stalling on I/O.
         """
         frame = getattr(self, "_latest", None)
         pose = getattr(self, "_pose", None)
         extra = {
             "run": run,
-            "position": str(pos),
+            "position": str(position),
             "angle": str(int(angle_deg)),
-            "imageIndex": str(pos * steps + idx),
+            "imageIndex": str(image_index),
         }
-        label = f"{run}/pos{pos:02d}/{int(angle_deg):03d}"
+        label = f"{run}/pos{position:02d}/{int(angle_deg):03d}"
 
         def _bg() -> None:
             try:
@@ -496,34 +447,3 @@ class TakePictureSkill(Module):
             self._uploads = [u for u in self._uploads if u.is_alive()]
             self._uploads.append(t)
         t.start()
-
-    def _spin_by(self, deg: float, rate: float) -> None:
-        """Spin the base by ~`deg` degrees via a continuous cmd_vel yaw command.
-
-        Open-loop on the commanded direction, closed-loop on the *amount*: we
-        publish a steady rate and stop once odom shows we've turned `deg`. Used
-        for the fan-out turn between stops. +deg = left (CCW). No-op without odom.
-        """
-        pose = getattr(self, "_pose", None)
-        if pose is None:
-            logger.warning("room_scan spin skipped: no odometry yet")
-            return
-        goal = math.radians(abs(deg))
-        signed_rate = math.copysign(rate, deg)
-        prev = pose.yaw
-        accumulated = 0.0
-        started = time.monotonic()
-        deadline = started + max(20.0, (goal / max(rate, 0.05)) * 10.0)
-        try:
-            while accumulated < goal and not self._capture_stop.is_set():
-                if time.monotonic() > deadline:
-                    break
-                self.cmd_vel.publish(Twist(linear=[0.0, 0.0, 0.0], angular=[0.0, 0.0, signed_rate]))
-                self._capture_stop.wait(0.05)
-                cur = getattr(self, "_pose", None)
-                cur_yaw = cur.yaw if cur is not None else prev
-                accumulated += abs(math.atan2(math.sin(cur_yaw - prev), math.cos(cur_yaw - prev)))
-                prev = cur_yaw
-        finally:
-            self.cmd_vel.publish(Twist.zero())
-        logger.info("room_scan spin cmd=%.0f turned=%.0f deg", deg, math.degrees(accumulated))
