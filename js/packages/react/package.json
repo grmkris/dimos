@@ -1,0 +1,26 @@
+{
+  "name": "@dimos/react",
+  "version": "0.1.0",
+  "description": "React bindings for @dimos/topics",
+  "type": "module",
+  "main": "./src/index.tsx",
+  "module": "./src/index.tsx",
+  "types": "./src/index.tsx",
+  "exports": {
+    ".": "./src/index.tsx",
+    "./registry": "./src/registry.ts"
+  },
+  "scripts": {
+    "typecheck": "tsgo --noEmit",
+    "lint": "oxlint --type-aware --type-check ."
+  },
+  "devDependencies": {
+    "@dimos/topics": "workspace:*",
+    "@types/react": "catalog:",
+    "react": "catalog:"
+  },
+  "peerDependencies": {
+    "@dimos/topics": "workspace:*",
+    "react": ">=18"
+  }
+}

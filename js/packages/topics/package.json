@@ -1,0 +1,24 @@
+{
+  "name": "@dimos/topics",
+  "version": "0.1.0",
+  "description": "DimOS topics in the browser — transport-agnostic subscribe/visualize/teleop SDK",
+  "type": "module",
+  "main": "./src/index.ts",
+  "module": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./control": "./src/control.ts",
+    "./errors": "./src/errors.ts"
+  },
+  "scripts": {
+    "typecheck": "tsgo --noEmit",
+    "lint": "oxlint --type-aware --type-check ."
+  },
+  "dependencies": {
+    "@dimos/msgs": "npm:@jsr/dimos__msgs@0.1.4",
+    "@eclipse-zenoh/zenoh-ts": "catalog:",
+    "errore": "catalog:",
+    "zod": "catalog:"
+  }
+}

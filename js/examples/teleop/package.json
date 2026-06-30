@@ -1,0 +1,13 @@
+{
+  "name": "@dimos/example-teleop",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun run index.ts",
+    "typecheck": "tsgo --noEmit",
+    "lint": "oxlint --type-aware --type-check ."
+  },
+  "dependencies": {
+    "@dimos/topics": "workspace:*"
+  }
+}
