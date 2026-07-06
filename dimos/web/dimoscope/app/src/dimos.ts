@@ -5,6 +5,7 @@ import type { DimosCommands, DimosTopics } from "./dimos.topics.gen.ts";
 
 export const {
   useDimosClient,
+  useModules,
   useTopicLatest,
   useTopicRef,
   useTopicStats,

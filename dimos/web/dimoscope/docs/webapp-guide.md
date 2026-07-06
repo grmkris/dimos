@@ -105,6 +105,8 @@ The full codegen reference is [`packages/web/README.md`](../packages/web/README.
 
 - In this repo, add an app to the Deno workspace and import the workspace packages.
 - Outside this repo, vendor `packages/web` and `packages/react`, then alias them in your bundler.
+  The snippet below assumes a Vite React scaffold (`npm create vite@latest -- --template react-ts`,
+  which brings `@vitejs/plugin-react` — use its v4 line on Vite 5).
 
 ```ts
 resolve: {
@@ -117,4 +119,6 @@ resolve: {
 }
 ```
 
-Runtime deps: `@dimos/msgs` for decoding and React 18 for `@dimos/react`.
+Runtime deps: `@dimos/msgs` for decoding and React 18 for `@dimos/react`. `@dimos/msgs` is a JSR
+package — npm/bun installs need `.npmrc` with `@jsr:registry=https://npm.jsr.io` and the dependency
+written as `"@dimos/msgs": "npm:@jsr/dimos__msgs"`.

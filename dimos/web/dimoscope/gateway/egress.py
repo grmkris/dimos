@@ -47,6 +47,7 @@ RPC_COMMANDS = [
     {"target": "GO2Load", "method": "stop_all", "label": "Stop streams"},
     {"target": "GO2Load", "method": "start_bench", "label": "Start bench"},
     {"target": "GO2Load", "method": "stop_bench", "label": "Stop bench"},
+    {"target": "GO2Load", "method": "status", "label": "Load status"},
 ]
 RPC_WHITELIST = {(c["target"], c["method"]) for c in RPC_COMMANDS}
 
