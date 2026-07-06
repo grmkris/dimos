@@ -425,7 +425,10 @@ mod tests {
         let sess = hub.add_session(ctl, "WT-rs");
         hub.last_frames.lock().unwrap().insert(
             "/pose".to_string(),
-            ("geometry_msgs.Pose".to_string(), Bytes::from_static(b"LC02cached")),
+            (
+                "geometry_msgs.Pose".to_string(),
+                Bytes::from_static(b"LC02cached"),
+            ),
         );
         let before = now_ms();
         sess.on_control(&hub, &json!({"op": "subscribe", "topic": "/pose"}));
@@ -443,8 +446,14 @@ mod tests {
         let sess = hub.add_session(ctl, "WT-rs");
         {
             let mut cache = hub.last_frames.lock().unwrap();
-            cache.insert("/a".to_string(), ("T".to_string(), Bytes::from_static(b"a")));
-            cache.insert("/b".to_string(), ("T".to_string(), Bytes::from_static(b"b")));
+            cache.insert(
+                "/a".to_string(),
+                ("T".to_string(), Bytes::from_static(b"a")),
+            );
+            cache.insert(
+                "/b".to_string(),
+                ("T".to_string(), Bytes::from_static(b"b")),
+            );
         }
         sess.on_control(&hub, &json!({"op": "subscribe", "topic": "*"}));
         let mut got = vec![

@@ -92,7 +92,11 @@ pub fn set_qos_rules(pairs: &[(String, String)]) -> usize {
     let compiled: Vec<(bool, Regex, Lane)> = pairs
         .iter()
         .filter_map(|(pat, lane)| {
-            Some((pat.contains('#'), fnmatch_to_regex(pat)?, lane_by_name(lane)?))
+            Some((
+                pat.contains('#'),
+                fnmatch_to_regex(pat)?,
+                lane_by_name(lane)?,
+            ))
         })
         .collect();
     let n = compiled.len();
@@ -311,15 +315,24 @@ mod tests {
     #[test]
     fn operator_rules_layer() {
         // rule beats heuristic; empty table restores it
-        assert_eq!(set_qos_rules(&[("/rulez-debug/*".to_string(), "bulk".to_string())]), 1);
+        assert_eq!(
+            set_qos_rules(&[("/rulez-debug/*".to_string(), "bulk".to_string())]),
+            1
+        );
         assert_eq!(default_priority("/rulez-debug/anything", ""), LANE_BULK);
         set_qos_rules(&[]);
         assert_eq!(default_priority("/rulez-debug/anything", ""), LANE_DEFAULT);
 
         // '#' pattern classifies by "<topic>#<type>"
         set_qos_rules(&[("*#rulez_msgs.DriveCmd".to_string(), "command".to_string())]);
-        assert_eq!(default_priority("/whatever-rulez", "rulez_msgs.DriveCmd"), LANE_COMMAND);
-        assert_eq!(default_priority("/whatever-rulez", "rulez_msgs.Other"), LANE_DEFAULT);
+        assert_eq!(
+            default_priority("/whatever-rulez", "rulez_msgs.DriveCmd"),
+            LANE_COMMAND
+        );
+        assert_eq!(
+            default_priority("/whatever-rulez", "rulez_msgs.Other"),
+            LANE_DEFAULT
+        );
 
         // first match wins; unknown lane names are skipped
         let n = set_qos_rules(&[

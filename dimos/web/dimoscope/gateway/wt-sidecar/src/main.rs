@@ -83,7 +83,9 @@ async fn main() -> Result<()> {
     // drain to the link rate: write_all blocks, the backlog stays in the outbox where conflation
     // keeps only the freshest frame. 1.5 MB > clean-WAN BDP (~0.6 MB at 20 MB/s × 30 ms) so clean
     // throughput is unaffected.
-    let send_window: u64 = env_or("WT_SEND_WINDOW", "1500000").parse().unwrap_or(1_500_000);
+    let send_window: u64 = env_or("WT_SEND_WINDOW", "1500000")
+        .parse()
+        .unwrap_or(1_500_000);
     // Datagram freshness: drop a pose frame older than this at drain time (post-stall staleness
     // bound), and keep quinn's datagram send buffer small so newest-wins by drop-oldest.
     let dgram_ttl_ms: f64 = env_or("WT_DGRAM_TTL_MS", "200").parse().unwrap_or(200.0);
@@ -91,7 +93,9 @@ async fn main() -> Result<()> {
     // Belt-and-braces: explicitly advertise datagram support (an unset receive buffer would leave
     // max_datagram_size() None and every small frame undeliverable). Measured sessions negotiate
     // Some(~1295) with quinn's defaults too — this pins the behavior rather than changing it.
-    let dgram_recv_buf: usize = env_or("WT_DGRAM_RECV_BUF", "1048576").parse().unwrap_or(1_048_576);
+    let dgram_recv_buf: usize = env_or("WT_DGRAM_RECV_BUF", "1048576")
+        .parse()
+        .unwrap_or(1_048_576);
     // Bulk credit gate: the browser acks consumed bulk-stream bytes (bulk-ack op) and the drain
     // keeps written − acked ≤ ack-rate × target — i.e. at most ~target ms of standing queue across
     // quinn buffer + qdisc + network, whatever the link rate. A static send_window can't do this:
@@ -164,7 +168,11 @@ struct SessionKnobs {
     stats_s: f64,
 }
 
-async fn handle_session(hub: Arc<Hub>, incoming: IncomingSession, knobs: SessionKnobs) -> Result<()> {
+async fn handle_session(
+    hub: Arc<Hub>,
+    incoming: IncomingSession,
+    knobs: SessionKnobs,
+) -> Result<()> {
     let request = incoming.await?;
     // Accept regardless of URL path — the wire protocol doesn't route on :path.
     let conn = Arc::new(request.accept().await?);
@@ -183,7 +191,11 @@ async fn handle_session(hub: Arc<Hub>, incoming: IncomingSession, knobs: Session
     // Two independent drain tasks: small lanes on datagrams (drain_datagrams, drop-if-undeliverable),
     // big frames on the credit-gated bulk stream (drain_bulk) — a stalled bulk write can never
     // head-of-line-block a datagram.
-    let dgrams = tokio::spawn(drain_datagrams(conn.clone(), sess.clone(), knobs.dgram_ttl_ms));
+    let dgrams = tokio::spawn(drain_datagrams(
+        conn.clone(),
+        sess.clone(),
+        knobs.dgram_ttl_ms,
+    ));
     let bulk = tokio::spawn(drain_bulk(conn.clone(), sess.clone(), knobs));
     let stats = (knobs.stats_s > 0.0)
         .then(|| tokio::spawn(session_stats(conn.clone(), sess.clone(), knobs.stats_s)));
@@ -309,7 +321,10 @@ fn drop_datagram(sess: &Session, dropped: &mut u64, max_dgram: usize, frame_len:
     if dropped.is_power_of_two() {
         warn!(
             sid = sess.sid,
-            dropped, max_dgram, frame_len, "datagram undeliverable — dropped (freshness > completeness)"
+            dropped,
+            max_dgram,
+            frame_len,
+            "datagram undeliverable — dropped (freshness > completeness)"
         );
     }
 }
@@ -432,9 +447,7 @@ async fn wait_credit(sess: &Session, rate: &mut AckRate, knobs: &SessionKnobs) {
         return;
     }
     loop {
-        let written = sess
-            .bulk_written
-            .load(std::sync::atomic::Ordering::Relaxed);
+        let written = sess.bulk_written.load(std::sync::atomic::Ordering::Relaxed);
         let acked = sess.bulk_acked.load(std::sync::atomic::Ordering::Relaxed);
         let budget = if acked == 0 {
             if rate.legacy {
@@ -479,9 +492,7 @@ async fn session_stats(conn: Arc<Connection>, sess: Arc<Session>, interval_s: f6
         tick.tick().await;
         let stats = q.stats();
         let tx = stats.udp_tx.bytes;
-        let written = sess
-            .bulk_written
-            .load(std::sync::atomic::Ordering::Relaxed);
+        let written = sess.bulk_written.load(std::sync::atomic::Ordering::Relaxed);
         let acked = sess.bulk_acked.load(std::sync::atomic::Ordering::Relaxed);
         info!(
             sid = sess.sid,
