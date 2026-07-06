@@ -478,6 +478,10 @@ export function useVideo(
       meta: VideoMeta,
       ctx: CanvasRenderingContext2D,
     ) => void;
+    /** Smooth playout (webcodecs frames only): buffer this many ms and paint frames at capture
+     *  cadence — steady like a video player, at the cost of that much added latency. 0/absent =
+     *  paint on arrival (lowest latency; encode/delivery jitter shows as judder). Live-tunable. */
+    smoothMs?: number;
   },
 ) {
   const { client, servers, activeId } = useContext(Ctx);
@@ -488,6 +492,8 @@ export function useVideo(
   // below keys on transport/topic/mode only).
   const onFrameRef = useRef(opts?.onFrame);
   onFrameRef.current = opts?.onFrame;
+  const smoothRef = useRef(opts?.smoothMs ?? 0);
+  smoothRef.current = opts?.smoothMs ?? 0;
   const [kind, setKind] = useState<"stream" | "frames">("frames");
   const [label, setLabel] = useState<string>();
   const [active, setActive] = useState<MediaKind>("jpeg"); // the kind actually negotiated
@@ -507,6 +513,51 @@ export function useVideo(
     const kindOf = (ch: MediaChannel): MediaKind =>
       ch.caps.codec === "jpeg" ? "jpeg" : ch.caps.output === "stream" ? "webrtc" : "webcodecs";
 
+    const paint = (frame: VideoFrame | ImageBitmap, m: VideoMeta): void => {
+      const cvs = canvasRef.current;
+      const ctx = cvs?.getContext("2d");
+      if (!cvs || !ctx) {
+        (frame as ImageBitmap).close?.();
+        return;
+      }
+      // ImageBitmap exposes .width/.height; VideoFrame (WebCodecs) exposes displayWidth/Height
+      // (its .width is undefined → would zero the canvas). Handle both.
+      const vf = frame as VideoFrame;
+      const fw = vf.displayWidth || (frame as ImageBitmap).width;
+      const fh = vf.displayHeight || (frame as ImageBitmap).height;
+      if (fw && fh && (cvs.width !== fw || cvs.height !== fh)) {
+        cvs.width = fw;
+        cvs.height = fh;
+      }
+      ctx.drawImage(frame as CanvasImageSource, 0, 0);
+      onFrameRef.current?.(frame, m, ctx); // CV/overlay seam — draw on ctx / copy frame, then we close it
+      (frame as ImageBitmap).close?.();
+    };
+
+    // Smooth playout (opt-in): paint each frame at capture-time + a fixed delay, absorbing
+    // encode/delivery jitter — Rerun-style pacing at the cost of `smoothMs` of added latency.
+    // `offset` tracks the fastest observed capture→arrival transit, so `smoothMs` is the real
+    // buffer depth rather than delay-minus-unknown-transit. Late frames are dropped, newest wins.
+    const pace: {
+      q: Array<{ frame: VideoFrame | ImageBitmap; m: VideoMeta; due: number }>;
+      offset?: number;
+      timer?: ReturnType<typeof setTimeout>;
+    } = { q: [] };
+    const pump = (): void => {
+      pace.timer = undefined;
+      if (!alive) return;
+      const now = Date.now();
+      let due = -1;
+      for (let i = 0; i < pace.q.length; i++) if (pace.q[i].due <= now) due = i;
+      if (due >= 0) {
+        for (let i = 0; i < due; i++) (pace.q[i].frame as ImageBitmap).close?.(); // late → dropped
+        const head = pace.q[due];
+        pace.q.splice(0, due + 1);
+        paint(head.frame, head.m);
+      }
+      if (pace.q.length) pace.timer = setTimeout(pump, Math.max(4, pace.q[0].due - now));
+    };
+
     const wire = (ch: MediaChannel): Promise<void> => {
       current = ch;
       setKind(ch.caps.output);
@@ -522,22 +573,24 @@ export function useVideo(
         });
       } else {
         ch.onFrame((id, frame, m) => {
-          if (!alive || id !== topic) return;
-          const cvs = canvasRef.current;
-          const ctx = cvs?.getContext("2d");
-          if (!cvs || !ctx) return;
-          // ImageBitmap exposes .width/.height; VideoFrame (WebCodecs) exposes displayWidth/Height
-          // (its .width is undefined → would zero the canvas). Handle both.
-          const vf = frame as VideoFrame;
-          const fw = vf.displayWidth || (frame as ImageBitmap).width;
-          const fh = vf.displayHeight || (frame as ImageBitmap).height;
-          if (fw && fh && (cvs.width !== fw || cvs.height !== fh)) {
-            cvs.width = fw;
-            cvs.height = fh;
+          if (!alive || id !== topic) {
+            (frame as ImageBitmap).close?.();
+            return;
           }
-          ctx.drawImage(frame as CanvasImageSource, 0, 0);
-          onFrameRef.current?.(frame, m, ctx); // CV/overlay seam — draw on ctx / copy frame, then we close it
-          (frame as ImageBitmap).close?.();
+          const delay = smoothRef.current;
+          const ts = (frame as VideoFrame).timestamp; // µs capture stamp; ImageBitmap has none
+          if (!delay || ts == null) {
+            paint(frame, m); // latency-first: paint on arrival (the default, and the teleop mode)
+            return;
+          }
+          const tsMs = ts / 1000;
+          const age = Date.now() - tsMs;
+          pace.offset = pace.offset === undefined
+            ? age
+            : Math.min(age, pace.offset + 0.02 * (age - pace.offset));
+          pace.q.push({ frame, m, due: tsMs + pace.offset + delay });
+          while (pace.q.length > 12) (pace.q.shift()!.frame as ImageBitmap).close?.(); // bounded
+          if (pace.timer === undefined) pump();
         });
       }
       return ch.connect().then(() => {
@@ -576,6 +629,9 @@ export function useVideo(
 
     return () => {
       alive = false;
+      if (pace.timer !== undefined) clearTimeout(pace.timer);
+      for (const item of pace.q) (item.frame as ImageBitmap).close?.();
+      pace.q.length = 0;
       current?.unsubscribe(topic);
       current?.close();
     };

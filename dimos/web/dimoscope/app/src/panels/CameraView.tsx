@@ -1,7 +1,11 @@
 // Live camera via useVideo — WebRTC/WebCodecs <video>/<canvas> when available, else the JPEG Image-topic floor; auto-detects the topic.
-import { type CSSProperties } from "react";
+import { type CSSProperties, useState } from "react";
 import type { MediaMode, TopicInfo } from "@dimos/react";
 import { useTopics, useVideo } from "../dimos";
+
+// Playout buffer depth when "smooth" is on (?smooth=<ms> overrides). 150 ms rides out encoder and
+// wire jitter at a latency cost that still feels live; 0 = paint-on-arrival (the teleop default).
+const SMOOTH_MS = Number(new URLSearchParams(location.search).get("smooth") ?? "") || 150;
 
 function pickImage(topics: TopicInfo[]): string | null {
   // Raw names only — the jpeg media channel swaps to a `<topic>_jpeg` transcode itself when the
@@ -15,8 +19,10 @@ function pickImage(topics: TopicInfo[]): string | null {
 export function CameraView({ mode, primary }: { mode?: MediaMode; primary?: boolean }) {
   const topics = useTopics();
   const topic = pickImage(topics);
+  const [smooth, setSmooth] = useState(new URLSearchParams(location.search).has("smooth"));
   const { kind, videoRef, canvasRef, label, active, requested, latencyMs } = useVideo(topic, {
     mode,
+    smoothMs: smooth ? SMOOTH_MS : 0,
   });
 
   const fellBack = requested && requested !== "auto" && active !== requested;
@@ -65,6 +71,16 @@ export function CameraView({ mode, primary }: { mode?: MediaMode; primary?: bool
             </span>
           )}
         </span>
+        {kind === "frames" && active === "webcodecs" && (
+          <button
+            className={smooth ? "tab active" : "tab"}
+            onClick={() => setSmooth((s) => !s)}
+            title={`smooth playout: buffer ${SMOOTH_MS} ms and paint at capture cadence — steady video for replay review; off = lowest latency for teleop`}
+            style={{ padding: "2px 8px" }}
+          >
+            {smooth ? `smooth ${SMOOTH_MS}ms` : "smooth"}
+          </button>
+        )}
         <button
           className="tab"
           onClick={fullscreen}
