@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 # dimoscope image plane: server-side JPEG transcode, so the browser sees a ~100 KB JPEG instead of
 # the raw ~2.8 MB rgb8 firehose (a 720p camera is ~40 MB/s raw — more than a fast LAN delivers).
 # A Bus consumer (like cloud.py) that, for every source sensor_msgs.Image, republishes
@@ -41,7 +55,13 @@ class ImagePlane:
         self._failed: set[str] = set()  # topics already warned about (log once, not per frame)
         self.enabled = HAS_TURBOJPEG and JPEG_ON
         if self.enabled:
-            self._tj = TurboJPEG()  # one instance — construction is not free
+            try:
+                self._tj = TurboJPEG()  # one instance — construction is not free
+            except Exception:
+                # The python package imports without the native libturbojpeg — only the
+                # constructor discovers it's missing. Same degrade as no package at all.
+                self.enabled = False
+        if self.enabled:
             # encoding → (channels, TJPF pixel format); defined here so a TurboJPEG-less build
             # never touches the TJPF_* names.
             self._pixfmt = {

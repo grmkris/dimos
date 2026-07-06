@@ -1,7 +1,7 @@
 {
   "name": "@dimos/web",
   "version": "0.1.0",
-  "description": "DimOS topics in the browser — transport-agnostic subscribe/visualize/teleop SDK",
+  "description": "DimOS topics in the browser \u2014 transport-agnostic subscribe/visualize/teleop SDK",
   "type": "module",
   "main": "./src/index.ts",
   "module": "./src/index.ts",

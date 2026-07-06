@@ -39,11 +39,13 @@ repos:
         args: [--fix=lf]
         exclude: \.patch$  # keep patch files byte-identical to upstream diffs
       - id: check-json
+        exclude: tsconfig\.json$  # tsconfig is JSONC — comments are part of the format
       - id: check-toml
       - id: check-yaml
       - id: pretty-format-json
         name: format json
         args: [ --autofix, --no-sort-keys ]
+        exclude: tsconfig\.json$  # tsconfig is JSONC — comments are part of the format
 
   - repo: https://github.com/editorconfig-checker/editorconfig-checker.python
     rev: 3.4.1

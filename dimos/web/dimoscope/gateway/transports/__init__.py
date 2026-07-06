@@ -4,8 +4,8 @@
 # head-of-line blocking under loss); both are read-only and mount on their own paths. WebTransport
 # AND WebRTC live in the native sidecar (gateway/wt-sidecar), fed by gateway/pipe.py — /rtc here is
 # only the SDP signaling relay (webrtc.py). _common.py holds the framing helpers.
-from .poll import PollPlane
-from .sse import SsePlane
-from .webrtc import RtcSignalRelay
+from .poll import PollPlane as PollPlane
+from .sse import SsePlane as SsePlane
+from .webrtc import RtcSignalRelay as RtcSignalRelay
 
 __all__ = ["PollPlane", "RtcSignalRelay", "SsePlane"]

@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 # Benchmark load generator for the in-browser bench: a configurable dimos Module emitting timestamped,
 # seq-tagged streams so the browser can measure latency/throughput/jitter/loss across transports.
 # Tuned by env (BENCH_HZ, BENCH_MID_HZ, BENCH_SLOW_HZ, BENCH_GRID_HZ, BENCH_IMG_HZ, BENCH_IMG_BYTES);

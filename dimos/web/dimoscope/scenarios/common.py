@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 # Shared scaffolding for the 3 "real-world" scenario blueprints (nav / arm / cam). Each scenario is a
 # standalone dimos Module publishing a distinct topic namespace at a distinct data profile, so the browser
 # SDK can discover → visualize → type → benchmark it; run one, Ctrl-C, run another (the gateway taps the
@@ -16,23 +30,23 @@ import time
 import numpy as np
 import reactivex as rx
 
-from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import Out
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.nav_msgs.Path import Path
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.std_msgs.Header import Header
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
+from dimos.core.core import rpc as rpc
+from dimos.core.module import Module as Module, ModuleConfig as ModuleConfig
+from dimos.core.stream import Out as Out
+from dimos.msgs.geometry_msgs.Pose import Pose as Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped as PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion as Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3 as Vector3
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid as OccupancyGrid
+from dimos.msgs.nav_msgs.Path import Path as Path
+from dimos.msgs.sensor_msgs.Image import Image as Image, ImageFormat as ImageFormat
+from dimos.msgs.sensor_msgs.Imu import Imu as Imu
+from dimos.msgs.sensor_msgs.JointState import JointState as JointState
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2 as PointCloud2
+from dimos.msgs.std_msgs.Header import Header as Header
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory as JointTrajectory
+from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint as TrajectoryPoint
+from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray as Detection2DArray
 
 __all__ = [
     "IDENT",
