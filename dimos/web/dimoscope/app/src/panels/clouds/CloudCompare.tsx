@@ -11,17 +11,12 @@ import { DRACO_TYPE, type TopicStats } from "@dimos/web";
 import { decodeDracoGeometry } from "./dracoDecode";
 import { type CloudLike, cloudExtent, cloudToXYZ, drawCloud, synthCloud } from "./drawCloud";
 import { type CloudTrio, createCloudTrio } from "./cloudThree";
+import { bwParts } from "../../lib/format";
 
 const RING = 12; // frames kept per encoding for timestamp matching
 const TS_BUCKET = 10; // ms — round source ts so raw/ds/draco (same source frame) share a key
 
 const TONE = { raw: "var(--signal)", ds: "var(--accent)", draco: "var(--ok)" } as const;
-
-function kbps(bps?: number): { n: string; u: string } {
-  if (!bps) return { n: "—", u: "" };
-  const kb = bps / 1000;
-  return kb >= 1000 ? { n: (kb / 1000).toFixed(1), u: "MB/s" } : { n: kb.toFixed(0), u: "kB/s" };
-}
 
 /** Base PointCloud2 topics that have a `<base>_draco` sibling (the cloud plane is transcoding them). */
 function baseClouds(topics: TopicInfo[]): string[] {
@@ -66,7 +61,7 @@ function CloudCell(
     canvasRef: React.RefObject<HTMLCanvasElement>;
   },
 ) {
-  const bw = kbps(stats?.bytesPerSec);
+  const bw = bwParts(stats?.bytesPerSec);
   return (
     <div className="cloud-cell">
       <div className="cloud-cell-head">

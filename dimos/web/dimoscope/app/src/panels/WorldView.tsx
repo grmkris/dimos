@@ -8,6 +8,7 @@ import { DRACO_TYPE } from "@dimos/web";
 import { type CloudLike, cloudExtent, cloudToXYZ, drawCloud, synthCloud } from "./clouds/drawCloud";
 import { decodeDracoGeometry } from "./clouds/dracoDecode";
 import { createWorldScene, type WorldScene } from "./worldThree";
+import { fmtBw } from "../lib/format";
 
 type LidarEnc = "raw" | "ds" | "draco";
 type ViewMode = "2d" | "3d";
@@ -23,12 +24,6 @@ function quatToYaw(q: { x: number; y: number; z: number; w: number }): number {
 function pick(topics: TopicInfo[], type: string, prefer: string[]): string | null {
   for (const p of prefer) if (topics.find((t) => t.topic === p && t.type === type)) return p;
   return topics.find((t) => t.type === type)?.topic ?? null;
-}
-
-function fmtBw(bps?: number): string {
-  if (!bps) return "";
-  const kb = bps / 1000;
-  return kb >= 1000 ? `${(kb / 1000).toFixed(1)} MB/s` : kb >= 1 ? `${kb.toFixed(0)} kB/s` : "";
 }
 
 /** Layer toggle that also shows live bandwidth; OFF unsubscribes the topic on the wire — true on-demand. */
