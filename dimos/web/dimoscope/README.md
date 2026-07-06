@@ -82,6 +82,10 @@ The gateway taps both LCM and Zenoh, normalizes messages, and fans them out over
 | HTTP poll | `/poll` | Request/response baseline |
 | Media | `/media` | Camera via WebCodecs, WebRTC media, or JPEG topic fallback |
 
+Selecting the WebRTC transport needs the sidecar to advertise a reachable ICE candidate:
+`RTC_PUBLIC_IP=127.0.0.1 deno task serve` for same-machine testing (macOS especially), or the host's
+public IP on a NATed/multi-NIC box. Without it the DataChannel silently fails to connect.
+
 Derived topics keep heavy browser paths practical:
 
 - `sensor_msgs.Image` -> `<topic>_jpeg` through TurboJPEG.
