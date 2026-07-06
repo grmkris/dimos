@@ -94,6 +94,11 @@ Typed topics + commands are generated from the blueprint: `deno task gen-types` 
 `createDimosClient<DimosTopics, DimosCommands>()` autocompletes topic names, message fields, and RPC
 signatures — see [`packages/web/README.md`](packages/web/README.md).
 
+Building your own webapp? Start with **[docs/webapp-guide.md](docs/webapp-guide.md)** — a 5-minute
+React app, a guided tour of this app as the reference implementation, and the `@dimos/react` hook
+catalog. The live copy-me panel is the **Example** tab (`?tab=example` —
+[app/src/Example.tsx](app/src/Example.tsx)).
+
 ## Transports — pick a delivery mechanism from the topbar dropdown
 
 Same app, same `@dimos/web` SDK, five swappable delivery mechanisms — all on the one service,

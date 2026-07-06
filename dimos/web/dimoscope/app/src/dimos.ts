@@ -7,9 +7,7 @@ export const {
   useDimosClient,
   useTopicLatest,
   useTopicRef,
-  useImageTopic,
   useTopicStats,
-  useModules,
 } = createDimosHooks<DimosTopics, DimosCommands>();
 
 // Map-agnostic hooks re-exported so `../dimos` is the one import site for every panel.

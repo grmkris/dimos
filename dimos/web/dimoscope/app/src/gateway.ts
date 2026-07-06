@@ -9,7 +9,7 @@ export interface GatewayCtx {
 export const GatewayContext = createContext<GatewayCtx>({ gateway: "", setGateway: () => {} });
 export const useGateway = () => useContext(GatewayContext);
 
-const GW_DEFAULT_PORT = "8080"; // keep in sync with main.tsx GW_PORT
+export const GW_DEFAULT_PORT = "8080"; // gateway HTTP/WS port (python -m gateway default)
 
 /** People paste browser URLs — accept them: strip the scheme and anything past the host:port,
  *  default the port for a bare host. Bracketed IPv6 passes through (it carries a colon). */

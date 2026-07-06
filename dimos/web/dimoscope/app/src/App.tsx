@@ -16,16 +16,27 @@ import { StatsBar } from "./panels/StatsBar";
 import { CommandsPanel } from "./panels/CommandsPanel";
 import { StreamsTab } from "./panels/streams/StreamsTab";
 import { CloudCompare } from "./panels/clouds/CloudCompare";
+import { Example } from "./Example";
 import { BenchDrawer, hasBenchParams } from "./panels/bench/BenchDrawer";
 import { TopbarNetem } from "./panels/TopbarNetem";
 import { normalizeGateway, recentGateways, useGateway } from "./gateway";
 import { NetemProvider } from "./netem";
 import { getParam, setUrlParam } from "./urlState";
 
-// ?tab=worldview|topics|clouds picks the page; bench params imply the Topics tab (where the drawer lives).
-type Tab = "2d" | "streams" | "clouds";
-const TAB_IDS: Record<string, Tab> = { worldview: "2d", topics: "streams", clouds: "clouds" };
-const TAB_PARAM: Record<Tab, string | null> = { "2d": null, streams: "topics", clouds: "clouds" };
+// ?tab=worldview|topics|clouds|example picks the page; bench params imply the Topics tab (where the drawer lives).
+type Tab = "2d" | "streams" | "clouds" | "example";
+const TAB_IDS: Record<string, Tab> = {
+  worldview: "2d",
+  topics: "streams",
+  clouds: "clouds",
+  example: "example",
+};
+const TAB_PARAM: Record<Tab, string | null> = {
+  "2d": null,
+  streams: "topics",
+  clouds: "clouds",
+  example: "example",
+};
 const initialTab = (): Tab => TAB_IDS[getParam("tab") ?? ""] ?? (hasBenchParams() ? "streams" : "2d");
 
 function Inspector({ topic }: { topic: string }) {
@@ -108,6 +119,12 @@ export function App() {
             onClick={() => setTab("clouds")}
           >
             Clouds
+          </button>
+          <button
+            className={`tab ${tab === "example" ? "tab-active" : ""}`}
+            onClick={() => setTab("example")}
+          >
+            Example
           </button>
         </div>
         <div className="topbar-right">
@@ -223,6 +240,13 @@ export function App() {
       {tab === "clouds" && (
         <div className="clouds-full">
           <CloudCompare />
+        </div>
+      )}
+
+      {/* Example tab: the copy-me reference panel for building your own app (docs/webapp-guide.md). */}
+      {tab === "example" && (
+        <div className="streams-full">
+          <Example />
         </div>
       )}
     </div>

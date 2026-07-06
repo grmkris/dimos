@@ -3,22 +3,21 @@ import { createRoot } from "react-dom/client";
 import { DimosProvider, type ServerOpt } from "@dimos/react";
 import { createAutoTransport, createDimosClient, createGatewayWsTransport } from "@dimos/web";
 import { App } from "./App";
-import { GatewayContext, normalizeGateway, pushRecentGateway } from "./gateway";
+import { GW_DEFAULT_PORT, GatewayContext, normalizeGateway, pushRecentGateway } from "./gateway";
 import { setUrlParam } from "./urlState";
 import "./styles.css";
 
 // Data plane, camera /media, and bench transports share one host:port; the gateway (host:port) is a
 // user-editable setting. WebTransport is the exception — QUIC can't share the HTTP port, so it uses
 // WT_PORT=8443; ?wt=<port> overrides it (deployments where only e.g. UDP 443 is reachable).
-const GW_PORT = 8080; // gateway HTTP/WS port (python -m gateway default)
 const WT_PORT = Number(new URLSearchParams(location.search).get("wt") ?? 8443); // gateway WebTransport/QUIC port
 
-// Initial gateway: ?gw=host:port seeds it, else localStorage, else hostname:GW_PORT.
+// Initial gateway: ?gw=host:port seeds it, else localStorage, else hostname:GW_DEFAULT_PORT.
 // Normalized at every entry: pasted full URLs (?gw=http://host:8080/) become host:port.
 function initialGateway(): string {
   return normalizeGateway(new URLSearchParams(location.search).get("gw") ?? "") ||
     normalizeGateway(localStorage.getItem("dimos.gw") ?? "") ||
-    `${location.hostname}:${GW_PORT}`;
+    `${location.hostname}:${GW_DEFAULT_PORT}`;
 }
 
 // Initial transport: ?transport=<id> seeds the dropdown, else localStorage, else auto. Unknown ids
@@ -30,8 +29,9 @@ function initialTransport(): string {
 }
 
 // Rebuilt whenever the gateway changes; DimosProvider reconnects on list-identity change.
+// The two entries here are the real transports — everything a normal app needs; the bench-only
+// delivery mechanisms live in experimentalServers() below.
 function buildServers(gateway: string): ServerOpt[] {
-  const httpBase = `${location.protocol}//${gateway}`; // http(s)://host:port (SSE/poll/cert base)
   const wsProto = location.protocol === "https:" ? "wss" : "ws";
   const wsBase = `${wsProto}://${gateway}`;
   const media = { gatewayUrl: `${wsBase}/media`, kinds: ["webcodecs", "webrtc", "jpeg"] as const };
@@ -58,7 +58,18 @@ function buildServers(gateway: string): ServerOpt[] {
       },
       media: { ...media },
     },
-    // Bench delivery mechanisms (read-only), lazily loaded so their browser-only APIs load only when picked.
+    ...experimentalServers(gateway, wsBase, media),
+  ];
+}
+
+// Bench delivery mechanisms (read-only), lazily loaded so their browser-only APIs load only when picked.
+function experimentalServers(
+  gateway: string,
+  wsBase: string,
+  media: ServerOpt["media"],
+): ServerOpt[] {
+  const httpBase = `${location.protocol}//${gateway}`; // http(s)://host:port (SSE/poll/cert base)
+  return [
     {
       id: "sse",
       label: "SSE",
