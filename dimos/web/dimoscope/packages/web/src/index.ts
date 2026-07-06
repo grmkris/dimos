@@ -82,6 +82,8 @@ export { createWebCodecsMedia } from "./media/webCodecsMedia.ts";
 export type { WebCodecsMediaDeps } from "./media/webCodecsMedia.ts";
 export type { MediaCaps, MediaChannel, MediaKind, VideoMeta } from "./types.ts";
 export type { MediaDeps } from "./media.ts";
+export { rawToRGBA, rawToVideoFrame } from "./media/pixels.ts";
+export type { RawImageLike } from "./media/pixels.ts";
 
 // Draco point-cloud variant (gateway/cloud.py): the custom-type marker + the dep-free envelope parse.
 // (Geometry decode for rendering lives in the app — it carries the draco3d wasm dep, not the SDK.)

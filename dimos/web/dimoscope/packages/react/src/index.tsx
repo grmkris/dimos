@@ -11,7 +11,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { createDimosClient, type DimosClient, selectMediaChannel } from "@dimos/web";
+import { createDimosClient, type DimosClient, rawToRGBA, selectMediaChannel } from "@dimos/web";
 import type {
   CommandInfo,
   MediaChannel,
@@ -349,36 +349,6 @@ interface ImageMsg {
   data: Uint8Array;
 }
 
-/** Convert a raw (uncompressed) Image to RGBA ImageData. Returns null for jpeg/unknown. */
-function rawToRGBA(img: ImageMsg): ImageData | null {
-  const { width: w, height: h, data } = img;
-  const enc = (img.encoding || "").toLowerCase();
-  if (!w || !h || !data?.length) return null;
-  const out = new Uint8ClampedArray(w * h * 4);
-  const ch = enc === "mono8" || enc === "8uc1" ? 1 : enc === "rgba8" || enc === "bgra8" ? 4 : 3;
-  const step = img.step && img.step >= w * ch ? img.step : w * ch;
-  const bgr = enc === "bgr8" || enc === "bgra8";
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const i = y * step + x * ch;
-      const o = (y * w + x) * 4;
-      if (ch === 1) {
-        const v = data[i];
-        out[o] = v;
-        out[o + 1] = v;
-        out[o + 2] = v;
-        out[o + 3] = 255;
-      } else {
-        out[o] = data[i + (bgr ? 2 : 0)];
-        out[o + 1] = data[i + 1];
-        out[o + 2] = data[i + (bgr ? 0 : 2)];
-        out[o + 3] = ch === 4 ? data[i + 3] : 255;
-      }
-    }
-  }
-  return new ImageData(out, w, h);
-}
-
 export interface ImageInfo {
   width: number;
   height: number;
@@ -568,19 +538,27 @@ export function useVideo(
       });
     };
 
-    // Try the preferred channel; on connect failure drop to the jpeg floor at runtime so the
-    // camera never goes dark just because the media gateway hiccuped.
-    const primary = selectMediaChannel({
-      client,
-      gatewayUrl,
-      serverMedia,
-      prefer: MODE_PREFER[mode],
-    });
-    wire(primary).catch(() => {
-      if (!alive || primary.caps.codec === "jpeg") return;
-      primary.close();
-      wire(selectMediaChannel({ client, prefer: ["jpeg"] })).catch(() => {});
-    });
+    // Walk the mode's preference order at runtime: when a channel's connect fails (unsupported
+    // codec, gateway without that plane, hiccup) try the NEXT preferred kind — not straight to the
+    // jpeg floor, or a webcodecs-less setup would skip a perfectly good webrtc path. The floor
+    // always terminates the walk, so the camera never goes dark.
+    (async () => {
+      for (const kind of MODE_PREFER[mode]) {
+        if (!alive) return;
+        const ch = selectMediaChannel({ client, gatewayUrl, serverMedia, prefer: [kind] });
+        if (kindOf(ch) !== kind) {
+          ch.close(); // kind unoffered/unsupported → selectMediaChannel floored it; try the next
+          continue;
+        }
+        try {
+          await wire(ch);
+          return;
+        } catch {
+          ch.close();
+        }
+      }
+      if (alive) wire(selectMediaChannel({ client, prefer: ["jpeg"] })).catch(() => {});
+    })();
 
     return () => {
       alive = false;

@@ -1,15 +1,15 @@
 // jpeg is the universal media floor — the Image-topic path repackaged as a MediaChannel so the app
 // consumes video uniformly; needs no media gateway; works on all browsers/transports. When the
 // gateway's image plane republishes a `<topic>_jpeg` transcode (~100 KB vs ~2.8 MB raw), this
-// channel subscribes that sibling instead — the caller keeps addressing the raw topic name.
-import type { MediaCaps, MediaChannel, Status, Subscription, VideoMeta } from "../types.ts";
+// channel rides that sibling instead — the caller keeps addressing the raw topic name.
+import type { MediaCaps, MediaChannel, Status, VideoMeta } from "../types.ts";
 import type { DimosClient } from "../client.ts";
+import { rawToRGBA, rawToVideoFrame } from "./pixels.ts";
 
 export interface JpegTopicMediaDeps {
   client: DimosClient; // for the jpeg-topic floor (subscribes via client.topic)
 }
 
-// sensor_msgs.Image → VideoFrame/ImageBitmap: jpeg → native decode; raw rgb8/bgr8/mono8/rgba8/bgra8.
 interface ImageMsg {
   width: number;
   height: number;
@@ -17,64 +17,6 @@ interface ImageMsg {
   is_bigendian?: number;
   step?: number;
   data: Uint8Array;
-}
-
-function rawToRGBA(img: ImageMsg): ImageData | null {
-  const { width: w, height: h, data } = img;
-  const enc = (img.encoding || "").toLowerCase();
-  if (!w || !h || !data?.length) return null;
-  const out = new Uint8ClampedArray(w * h * 4);
-  const ch = enc === "mono8" || enc === "8uc1" ? 1 : enc === "rgba8" || enc === "bgra8" ? 4 : 3;
-  const step = img.step && img.step >= w * ch ? img.step : w * ch;
-  const bgr = enc === "bgr8" || enc === "bgra8";
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const i = y * step + x * ch;
-      const o = (y * w + x) * 4;
-      if (ch === 1) {
-        const v = data[i];
-        out[o] = v;
-        out[o + 1] = v;
-        out[o + 2] = v;
-        out[o + 3] = 255;
-      } else {
-        out[o] = data[i + (bgr ? 2 : 0)];
-        out[o + 1] = data[i + 1];
-        out[o + 2] = data[i + (bgr ? 0 : 2)];
-        out[o + 3] = ch === 4 ? data[i + 3] : 255;
-      }
-    }
-  }
-  return new ImageData(out, w, h);
-}
-
-/** rgb8/bgr8 → VideoFrame via one flat 3→4-byte stride copy (no per-pixel swizzle branch, no async
- *  bitmap hop — VideoPixelFormat has no packed-24-bit format, but BGRX/RGBX map both encodings). */
-function rawToVideoFrame(img: ImageMsg): VideoFrame | null {
-  const { width: w, height: h, data } = img;
-  const enc = (img.encoding || "").toLowerCase();
-  if (!("VideoFrame" in globalThis) || !w || !h || !data?.length) return null;
-  if (enc !== "rgb8" && enc !== "bgr8") return null;
-  const step = img.step && img.step >= w * 3 ? img.step : w * 3;
-  const out = new Uint8Array(w * h * 4);
-  for (let y = 0, di = 0; y < h; y++) {
-    for (let si = y * step, xe = si + w * 3; si < xe; si += 3, di += 4) {
-      out[di] = data[si];
-      out[di + 1] = data[si + 1];
-      out[di + 2] = data[si + 2];
-      out[di + 3] = 255;
-    }
-  }
-  try {
-    return new VideoFrame(out, {
-      format: enc === "bgr8" ? "BGRX" : "RGBX",
-      codedWidth: w,
-      codedHeight: h,
-      timestamp: performance.now() * 1000, // required; µs
-    });
-  } catch {
-    return null; // fall through to the ImageData path
-  }
 }
 
 /** Decode a sensor_msgs.Image (jpeg or raw) to a VideoFrame/ImageBitmap. Rejects on unsupported/empty. */
@@ -93,8 +35,7 @@ function decodeImage(img: ImageMsg): Promise<VideoFrame | ImageBitmap> {
 export const createJpegTopicMedia = (deps: JpegTopicMediaDeps): MediaChannel => {
   const { client } = deps;
   const caps: MediaCaps = { output: "frames", codec: "jpeg" };
-  const subs = new Map<string, Subscription>();
-  const ageEma = new Map<string, number>();
+  const subs = new Map<string, () => void>(); // streamId → teardown (wire sub + discovery watch)
   let frameCb: ((id: string, f: VideoFrame | ImageBitmap, m: VideoMeta) => void) | undefined;
   let statusCb: ((s: Status) => void) | undefined;
   let latencyCb: ((id: string, ms: number) => void) | undefined;
@@ -106,16 +47,12 @@ export const createJpegTopicMedia = (deps: JpegTopicMediaDeps): MediaChannel => 
 
   function subscribe(streamId: string): void {
     if (subs.has(streamId)) return;
-    // Prefer the gateway image plane's `<topic>_jpeg` transcode when discovered — same frames,
-    // ~40× fewer bytes. The caller's id stays the raw topic name.
-    const wire = client.listTopics().some((t) => t.topic === streamId + "_jpeg")
-      ? streamId + "_jpeg"
-      : streamId;
     // Freshest-wins decode pump: keep only the newest message and never run two decodes at once —
     // an async decode queue is unbounded latency (and out-of-order frames) the moment decoding is
     // slower than delivery. A slow machine drops frames; it never falls behind.
     let pending: { img: ImageMsg; recvTs: number; hopMs?: number } | null = null;
     let busy = false;
+    let ageEma: number | undefined;
     const pump = (): void => {
       if (busy || !pending) return;
       const { img, recvTs, hopMs } = pending;
@@ -127,10 +64,8 @@ export const createJpegTopicMedia = (deps: JpegTopicMediaDeps): MediaChannel => 
             // Age at draw = now − gateway send stamp (recvTs − transport hop); falls back to
             // decode time alone when the transport carries no hop measurement.
             const age = Date.now() - recvTs + (hopMs ?? 0);
-            const prev = ageEma.get(streamId);
-            const ema = prev === undefined ? age : prev + 0.3 * (age - prev);
-            ageEma.set(streamId, ema);
-            latencyCb(streamId, ema);
+            ageEma = ageEma === undefined ? age : ageEma + 0.3 * (age - ageEma);
+            latencyCb(streamId, ageEma);
           }
           frameCb?.(streamId, frame, {
             width: img.width,
@@ -145,27 +80,43 @@ export const createJpegTopicMedia = (deps: JpegTopicMediaDeps): MediaChannel => 
           pump(); // drain whatever arrived while decoding (always the newest)
         });
     };
-    const sub = client.topic(wire).subscribeLatest((raw) => {
-      pending = {
-        img: raw.data as ImageMsg,
-        recvTs: raw.meta.recvTs,
-        hopMs: raw.meta.latencyMs,
-      };
-      pump();
+
+    // Ride the gateway image plane's `<topic>_jpeg` transcode when available — same frames, ~40×
+    // fewer bytes. The sibling appears in discovery only after the plane sees its first frame, so
+    // watch topics and switch the wire subscription when it shows up (else a client that
+    // subscribes early would stay pinned to the raw firehose for the whole session).
+    const sibling = streamId + "_jpeg";
+    const wireSub = (name: string) =>
+      client.topic(name).subscribeLatest((raw) => {
+        pending = { img: raw.data as ImageMsg, recvTs: raw.meta.recvTs, hopMs: raw.meta.latencyMs };
+        pump();
+      });
+    const hasSibling = () => client.listTopics().some((t) => t.topic === sibling);
+    let sub = wireSub(hasSibling() ? sibling : streamId);
+    let unwatch: (() => void) | undefined;
+    if (!hasSibling() && streamId !== sibling) {
+      unwatch = client.onTopics(() => {
+        if (!hasSibling()) return;
+        unwatch?.();
+        unwatch = undefined;
+        sub.unsubscribe(); // swap the wire to the transcode; frames keep reporting as streamId
+        sub = wireSub(sibling);
+      });
+    }
+    subs.set(streamId, () => {
+      unwatch?.();
+      sub.unsubscribe();
     });
-    subs.set(streamId, sub);
   }
 
   function unsubscribe(streamId: string): void {
-    subs.get(streamId)?.unsubscribe();
+    subs.get(streamId)?.();
     subs.delete(streamId);
-    ageEma.delete(streamId);
   }
 
   function close(): void {
-    for (const s of subs.values()) s.unsubscribe();
+    for (const teardown of subs.values()) teardown();
     subs.clear();
-    ageEma.clear();
     statusCb?.("closed");
   }
 
