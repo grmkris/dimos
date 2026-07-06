@@ -119,6 +119,42 @@ def test_stop_escalates_to_force_when_term_fails(monkeypatch):
     assert forced == [False, True]  # SIGTERM first, then the SIGKILL escalation
 
 
+def test_slow_start_reports_in_progress_without_killing(monkeypatch):
+    """Past the health-check timeout the starter keeps running (it registers itself later) — the
+    handler reports still-starting instead of killing it."""
+    monkeypatch.setattr(runs, "START_TIMEOUT_S", 0.05)
+    killed: list = []
+
+    class FakeProc:
+        returncode = None
+        stdout = None
+
+        async def communicate(self):
+            await asyncio.sleep(10)
+
+        def kill(self):
+            killed.append(True)
+
+    async def fake_exec(*argv, **kw):
+        return FakeProc()
+
+    monkeypatch.setattr(runs.asyncio, "create_subprocess_exec", fake_exec)
+    ok, tail = asyncio.run(runs._spawn("unitree-go2", "go2_short"))
+    assert ok is False
+    assert "still starting" in tail
+    assert killed == []  # the slow starter must survive
+
+
+def test_state_clears_stale_error_when_a_run_is_active(monkeypatch):
+    monkeypatch.setattr(runs, "RUNS_CTL", True)
+    monkeypatch.setattr(runs, "get_most_recent", lambda alive_only=True: _entry())
+    monkeypatch.setattr(runs, "_dbs", lambda: ["go2_short"])
+    monkeypatch.setattr(runs, "_last_error", "still starting after 180s")
+    st = runs._state()
+    assert st["active"] is not None
+    assert st["error"] is None  # the live run wins over the stale start error
+
+
 def test_state_surfaces_active_run_and_replay_db(monkeypatch):
     monkeypatch.setattr(runs, "RUNS_CTL", True)
     monkeypatch.setattr(runs, "get_most_recent", lambda alive_only=True: _entry())

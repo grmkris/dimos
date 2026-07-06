@@ -42,10 +42,19 @@ RUNS_CTL = os.environ.get("RUNS_CTL", "0") == "1"
 # The web picks from names, never composes argv: blueprints the UI may launch.
 BLUEPRINTS = ["unitree-go2", "go2-load"]
 REPO_ROOT = Path(dimos.__file__).resolve().parents[1]
-START_TIMEOUT_S = 180  # `run -d` health-checks before daemonizing; first runs may pull data/LFS
+# `run -d` health-checks before daemonizing; a first run of a big recording extracts gigabytes and
+# can legitimately outlive this. Past the timeout the start is reported as still-in-progress (the
+# spawned CLI keeps going and registers itself) — not killed, not an error.
+START_TIMEOUT_S = float(os.environ.get("RUNS_START_TIMEOUT_S", "180"))
 
 _lock = asyncio.Lock()  # one start/stop in flight at a time
 _last_error: str | None = None
+_drainers: set[asyncio.Task[None]] = set()  # keep past-timeout starters' pipes drained
+
+
+async def _drain(stream: asyncio.StreamReader) -> None:
+    while await stream.read(65536):
+        pass
 
 
 def _dbs() -> list[str]:
@@ -82,12 +91,14 @@ def _argv_db(argv: list[str]) -> str | None:
 
 
 def _state() -> dict[str, Any]:
+    active = _active()
     return {
         "enabled": RUNS_CTL,
-        "active": _active(),
+        "active": active,
         "blueprints": BLUEPRINTS,
         "dbs": _dbs(),
-        "error": _last_error,
+        # A live run contradicts any stale start error — the run winning is the truth.
+        "error": None if active else _last_error,
     }
 
 
@@ -106,8 +117,17 @@ async def _spawn(blueprint: str, db: str | None) -> tuple[bool, str]:
     try:
         out, _ = await asyncio.wait_for(proc.communicate(), timeout=START_TIMEOUT_S)
     except asyncio.TimeoutError:
-        proc.kill()
-        return False, f"start timed out after {START_TIMEOUT_S}s"
+        # Don't kill: the CLI is health-checking a legitimately slow start (big recordings extract
+        # for minutes). It registers itself in the run registry when up — poll /runs to see it.
+        # Keep its stdout drained so it can't block on a full pipe once we stop reading.
+        if proc.stdout is not None:
+            t = asyncio.create_task(_drain(proc.stdout))
+            _drainers.add(t)
+            t.add_done_callback(_drainers.discard)
+        return False, (
+            f"still starting after {START_TIMEOUT_S:.0f}s — large recordings take minutes; "
+            "the run appears in /runs when ready"
+        )
     tail = out.decode(errors="replace").strip()[-400:]
     return (proc.returncode or 0) == 0, tail
 
