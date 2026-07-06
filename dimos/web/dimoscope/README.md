@@ -17,6 +17,9 @@ robot / sim ─► DimOS bus (LCM | Zenoh)
            WS  /rtc         WebRTC signaling (the sidecar owns the DataChannel sessions)
            WS  /media       camera: webrtc / webcodecs / jpeg
            GET /cert        the sidecar's self-signed cert hash
+         Derived bus topics: raw camera Image → <topic>_jpeg (TurboJPEG; IMAGE_JPEG=0 to disable,
+         IMAGE_JPEG_QUALITY=75) and PointCloud2 → <topic>_ds/_draco — the browser rides these
+         instead of multi-MB raw frames (docs/video-latency-2026-07-06.md).
    ▼
 @dimos/web  (decode via @dimos/msgs · on-demand · QoS · client.call RPC · useVideo media)
    ▼
