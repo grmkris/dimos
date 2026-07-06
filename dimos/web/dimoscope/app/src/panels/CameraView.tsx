@@ -12,7 +12,9 @@ function pickImage(topics: TopicInfo[]): string | null {
 export function CameraView({ mode, primary }: { mode?: MediaMode; primary?: boolean }) {
   const topics = useTopics();
   const topic = pickImage(topics);
-  const { kind, videoRef, canvasRef, label, active, requested } = useVideo(topic, { mode });
+  const { kind, videoRef, canvasRef, label, active, requested, latencyMs } = useVideo(topic, {
+    mode,
+  });
 
   const fellBack = requested && requested !== "auto" && active !== requested;
 
@@ -52,6 +54,7 @@ export function CameraView({ mode, primary }: { mode?: MediaMode; primary?: bool
         >
           Camera · {topic ?? "no sensor_msgs.Image"}
           {label ? ` · ${label}` : ""}
+          {latencyMs != null ? ` · ${kind === "stream" ? "jb" : "age"} ${latencyMs} ms` : ""}
           {fellBack && (
             <span style={{ color: "var(--accent)" }}>
               {" "}

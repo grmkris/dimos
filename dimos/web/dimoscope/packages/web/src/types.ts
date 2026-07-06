@@ -177,6 +177,9 @@ export interface MediaChannel {
   onStream(cb: (streamId: string, stream: MediaStream) => void): void; // "stream"
   onFrame(cb: (streamId: string, frame: VideoFrame | ImageBitmap, m: VideoMeta) => void): void; // "frames"
   onStatus(cb: (s: Status) => void): void;
+  /** Smoothed display-path latency (ms): frame age (encoder stamp → draw, same-host clocks) for
+   *  "frames" channels; measured jitter-buffer playout delay for "stream" (webrtc). */
+  onLatency?(cb: (streamId: string, ms: number) => void): void;
   readonly caps: MediaCaps;
   label?: string;
 }

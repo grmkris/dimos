@@ -10,6 +10,7 @@ interface Decoding {
   decoder: VideoDecoder;
   sawKey: boolean; // a decoder can only start on a keyframe
   meta: VideoMeta;
+  ageEmaMs?: number; // smoothed encoder-stamp → decode age (same-host clocks)
 }
 
 export interface WebCodecsMediaDeps {
@@ -33,6 +34,7 @@ export const createWebCodecsMedia = (deps: WebCodecsMediaDeps): MediaChannel => 
   const wanted = new Set<string>(); // (re)start these once the ws opens / reopens
   let frameCb: ((id: string, frame: VideoFrame | ImageBitmap, m: VideoMeta) => void) | undefined;
   let statusCb: ((s: Status) => void) | undefined;
+  let latencyCb: ((id: string, ms: number) => void) | undefined;
 
   function connect(): Promise<void> {
     if (ws && ws.readyState <= WebSocket.OPEN) return Promise.resolve();
@@ -83,6 +85,14 @@ export const createWebCodecsMedia = (deps: WebCodecsMediaDeps): MediaChannel => 
       output: (frame: VideoFrame) => {
         meta.width = frame.displayWidth || frame.codedWidth;
         meta.height = frame.displayHeight || frame.codedHeight;
+        // frame.timestamp is the gateway's wall-clock encode stamp (ts_us) — age is meaningful
+        // when browser and gateway clocks agree (localhost / NTP-synced hosts).
+        const d = decoders.get(topic);
+        if (d && latencyCb) {
+          const age = Date.now() - frame.timestamp / 1000;
+          d.ageEmaMs = d.ageEmaMs === undefined ? age : d.ageEmaMs + 0.3 * (age - d.ageEmaMs);
+          latencyCb(topic, d.ageEmaMs);
+        }
         frameCb?.(topic, frame, meta); // caller draws then closes the frame
       },
       error: () => {
@@ -156,6 +166,9 @@ export const createWebCodecsMedia = (deps: WebCodecsMediaDeps): MediaChannel => 
     },
     onStatus(cb: (s: Status) => void): void {
       statusCb = cb;
+    },
+    onLatency(cb: (id: string, ms: number) => void): void {
+      latencyCb = cb;
     },
     close,
   };

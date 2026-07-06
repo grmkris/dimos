@@ -16,6 +16,8 @@ export const createWebRtcMedia = (deps: WebRtcMediaDeps): MediaChannel => {
   let active: string | undefined; // the one subscribed camera topic
   let streamCb: ((id: string, s: MediaStream) => void) | undefined;
   let statusCb: ((s: Status) => void) | undefined;
+  let latencyCb: ((id: string, ms: number) => void) | undefined;
+  let statsTimer: ReturnType<typeof setInterval> | undefined;
 
   function connect(): Promise<void> {
     if (ws && ws.readyState <= WebSocket.OPEN) return Promise.resolve();
@@ -58,7 +60,22 @@ export const createWebRtcMedia = (deps: WebRtcMediaDeps): MediaChannel => {
     pc = peer;
     peer.addTransceiver("video", { direction: "recvonly" });
     peer.ontrack = (ev) => {
-      if (active === streamId) streamCb?.(streamId, ev.streams[0]);
+      if (active !== streamId) return;
+      // Zero the receive-side jitter buffer: Chrome's adaptive target reads a low-fps source's
+      // inter-frame gaps (200 ms at 5 fps) as jitter and holds several frame-intervals of playout
+      // delay — even on loopback. Freshness over smoothness, same policy as the data plane.
+      const rx = ev.receiver as RTCRtpReceiver & {
+        jitterBufferTarget?: number | null; // ms (spec, Chrome ≥ M120)
+        playoutDelayHint?: number; // seconds (legacy Chrome hint)
+      };
+      try {
+        rx.jitterBufferTarget = 0;
+      } catch { /* older browsers: hint below still applies */ }
+      try {
+        rx.playoutDelayHint = 0;
+      } catch { /* non-Chromium: default buffering */ }
+      streamCb?.(streamId, ev.streams[0]);
+      watchJitterBuffer(peer, streamId);
     };
     peer.onconnectionstatechange = () => {
       if (peer.connectionState === "failed" || peer.connectionState === "closed") {
@@ -85,6 +102,35 @@ export const createWebRtcMedia = (deps: WebRtcMediaDeps): MediaChannel => {
     });
   }
 
+  /** ~1 Hz poll of the measured jitter-buffer playout delay (avg ms per emitted frame over the
+   *  last interval) — the number the receiver knobs above are meant to drive toward ~0. */
+  function watchJitterBuffer(peer: RTCPeerConnection, streamId: string): void {
+    clearInterval(statsTimer);
+    let prevDelay = 0;
+    let prevCount = 0;
+    statsTimer = setInterval(async () => {
+      if (pc !== peer || active !== streamId) return clearInterval(statsTimer);
+      const stats = await peer.getStats().catch(() => undefined);
+      if (!stats) return;
+      for (const s of stats.values()) {
+        const st = s as {
+          type: string;
+          kind?: string;
+          jitterBufferDelay?: number;
+          jitterBufferEmittedCount?: number;
+        };
+        if (st.type !== "inbound-rtp" || st.kind !== "video") continue;
+        const d = st.jitterBufferDelay ?? 0; // cumulative seconds
+        const n = st.jitterBufferEmittedCount ?? 0;
+        if (n > prevCount) {
+          latencyCb?.(streamId, ((d - prevDelay) / (n - prevCount)) * 1000);
+        }
+        prevDelay = d;
+        prevCount = n;
+      }
+    }, 1000);
+  }
+
   function unsubscribe(streamId: string): void {
     if (active !== streamId) return;
     send({ op: "webrtc-stop", topic: streamId });
@@ -93,6 +139,7 @@ export const createWebRtcMedia = (deps: WebRtcMediaDeps): MediaChannel => {
   }
 
   function teardownPc(): void {
+    clearInterval(statsTimer);
     pc?.close();
     pc = undefined;
   }
@@ -118,6 +165,9 @@ export const createWebRtcMedia = (deps: WebRtcMediaDeps): MediaChannel => {
     onFrame() {}, // n/a — this channel is "stream"
     onStatus(cb: (s: Status) => void): void {
       statusCb = cb;
+    },
+    onLatency(cb: (id: string, ms: number) => void): void {
+      latencyCb = cb;
     },
     close,
   };

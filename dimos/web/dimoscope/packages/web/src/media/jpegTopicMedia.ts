@@ -61,8 +61,10 @@ export const createJpegTopicMedia = (deps: JpegTopicMediaDeps): MediaChannel => 
   const { client } = deps;
   const caps: MediaCaps = { output: "frames", codec: "jpeg" };
   const subs = new Map<string, Subscription>();
+  const ageEma = new Map<string, number>();
   let frameCb: ((id: string, f: ImageBitmap, m: VideoMeta) => void) | undefined;
   let statusCb: ((s: Status) => void) | undefined;
+  let latencyCb: ((id: string, ms: number) => void) | undefined;
 
   function connect(): Promise<void> {
     statusCb?.("open"); // rides the existing client connection — nothing to open
@@ -74,14 +76,23 @@ export const createJpegTopicMedia = (deps: JpegTopicMediaDeps): MediaChannel => 
     const sub = client.topic(streamId).subscribeLatest((raw) => {
       const img = raw.data as ImageMsg;
       decodeImageToBitmap(img)
-        .then((bmp) =>
+        .then((bmp) => {
+          if (latencyCb) {
+            // Age at draw = now − gateway send stamp (recvTs − transport hop); falls back to
+            // decode time alone when the transport carries no hop measurement.
+            const age = Date.now() - raw.meta.recvTs + (raw.meta.latencyMs ?? 0);
+            const prev = ageEma.get(streamId);
+            const ema = prev === undefined ? age : prev + 0.3 * (age - prev);
+            ageEma.set(streamId, ema);
+            latencyCb(streamId, ema);
+          }
           frameCb?.(streamId, bmp, {
             width: img.width,
             height: img.height,
             fps: 0,
             codec: img.encoding,
-          })
-        )
+          });
+        })
         .catch(() => {});
     });
     subs.set(streamId, sub);
@@ -90,11 +101,13 @@ export const createJpegTopicMedia = (deps: JpegTopicMediaDeps): MediaChannel => 
   function unsubscribe(streamId: string): void {
     subs.get(streamId)?.unsubscribe();
     subs.delete(streamId);
+    ageEma.delete(streamId);
   }
 
   function close(): void {
     for (const s of subs.values()) s.unsubscribe();
     subs.clear();
+    ageEma.clear();
     statusCb?.("closed");
   }
 
@@ -110,6 +123,9 @@ export const createJpegTopicMedia = (deps: JpegTopicMediaDeps): MediaChannel => 
     },
     onStatus(cb: (s: Status) => void): void {
       statusCb = cb;
+    },
+    onLatency(cb: (id: string, ms: number) => void): void {
+      latencyCb = cb;
     },
     close,
   };

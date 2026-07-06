@@ -514,6 +514,8 @@ export function useVideo(
   const [kind, setKind] = useState<"stream" | "frames">("frames");
   const [label, setLabel] = useState<string>();
   const [active, setActive] = useState<MediaKind>("jpeg"); // the kind actually negotiated
+  // Display-path latency: frame age for frames channels, jitter-buffer delay for webrtc.
+  const [latencyMs, setLatencyMs] = useState<number>();
 
   const mediaCfg = servers.find((s) => s.id === activeId)?.media;
   const gatewayUrl = mediaCfg?.gatewayUrl;
@@ -531,6 +533,10 @@ export function useVideo(
       setKind(ch.caps.output);
       setLabel(ch.label);
       setActive(kindOf(ch));
+      setLatencyMs(undefined); // stale reading from a previous channel must not survive a swap
+      ch.onLatency?.((id, ms) => {
+        if (alive && id === topic) setLatencyMs(Math.round(ms));
+      });
       if (ch.caps.output === "stream") {
         ch.onStream((id, stream) => {
           if (alive && id === topic && videoRef.current) videoRef.current.srcObject = stream;
@@ -581,7 +587,16 @@ export function useVideo(
     };
   }, [client, topic, mode, gatewayUrl, serverMedia]);
 
-  return { kind, videoRef, canvasRef, label, active, requested: mode, offered: serverMedia };
+  return {
+    kind,
+    videoRef,
+    canvasRef,
+    label,
+    active,
+    requested: mode,
+    offered: serverMedia,
+    latencyMs,
+  };
 }
 
 /**
