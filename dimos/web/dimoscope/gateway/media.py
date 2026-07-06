@@ -221,7 +221,7 @@ class MediaPlane:
         # SKIPPED — never queued (bufferbloat) and never a stall for other viewers. Each skip is
         # the ABR down-signal (the link can't carry this bitrate); a viewer that finishes draining
         # after skips gets a forced IDR to rejoin the GOP. Eviction only on a dead socket.
-        inflight: dict[WebSocket, asyncio.Task] = {}
+        inflight: dict[WebSocket, asyncio.Task[None]] = {}
         stalled: set[WebSocket] = set()
         while True:
             topic, buf, is_key, ts_us = await self._video_q.get()
