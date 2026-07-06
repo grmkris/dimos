@@ -338,11 +338,11 @@ random loss:
 
 The trade: BBR is less aggressive than cubic on a clean fat pipe, so clean WS bulk eases ~12.4 →
 10.3 MB/s — worth it for a robot link where loss resilience beats peak clean throughput. `notsent_lowat`
-was tried and reverted: 16 KB is too shallow for a 20 MB/s flood on one pipe (the socket backs up
+is not used: 16 KB is too shallow for a 20 MB/s flood on one pipe (the socket backs up
 and the pose lane sheds). permessage-deflate is off by default (`WS_DEFLATE=1` restores) — pure CPU
 on incompressible sensor frames.
 
-**WebTransport `WT_SEND_WINDOW` (1.5 MB, was quinn's ~10 MB default).** The default lets `write_all`
+**WebTransport `WT_SEND_WINDOW` (1.5 MB; quinn's default is ~10 MB).** The default lets `write_all`
 accept frame after frame into quinn's buffer, so a saturating bulk topic piles up *past* the outbox
 where conflation can't help. Capping it paces the drain to the link rate; backlog stays in the
 outbox as the freshest single frame:
