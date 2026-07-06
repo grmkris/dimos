@@ -24,8 +24,10 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 import json
+import os
 import struct
 import time
 from typing import Any
@@ -64,6 +66,9 @@ except Exception:  # pragma: no cover - depends on optional av install
 MEDIA_KINDS = (
     (["webcodecs"] if HAS_WEBCODECS else []) + (["webrtc"] if HAS_WEBRTC else []) + ["jpeg"]
 )
+MEDIA_H264_CRF = os.environ.get("MEDIA_H264_CRF", "20")
+MEDIA_H264_PRESET = os.environ.get("MEDIA_H264_PRESET", "veryfast")
+MEDIA_H264_GOP_SECONDS = float(os.environ.get("MEDIA_H264_GOP_SECONDS", "2"))
 
 
 class MediaPlane:
@@ -74,6 +79,8 @@ class MediaPlane:
         self.webrtc_pcs: dict[WebSocket, list[tuple[RTCPeerConnection, CameraVideoTrack, str]]] = {}
         # WebCodecs: camera topic -> set of ws wanting H.264 chunks; one encoder per topic.
         self.webcodecs_subs: dict[str, set[WebSocket]] = {}
+        self.wt_webcodecs_subs: set[str] = set()
+        self.wt_sink: Callable[[bytes], None] | None = None
         self.encoders: dict[str, av.VideoCodecContext] = {}
         self.force_key: set[str] = set()
         self._in = ConflatedIngest()  # freshest-wins: a slow encoder lowers fps, never adds lag
@@ -88,13 +95,23 @@ class MediaPlane:
         )  # serialise encode → encoders stay single-thread
         bus.subscribe(self._on_sample)
 
+    def set_wt_sink(self, sink: Callable[[bytes], None]) -> None:
+        self.wt_sink = sink
+
+    def set_wt_subs(self, topics: set[str]) -> None:
+        new_topics = set(topics)
+        for topic in new_topics - self.wt_webcodecs_subs:
+            self.force_key.add(topic)
+        self.wt_webcodecs_subs = new_topics
+
     # bus tap (loop thread, cheap): only camera topics with live viewers
     def _on_sample(self, s: Sample) -> None:
         if "Image" not in (s.type or ""):  # camera frames are sensor_msgs.Image
             return
         trs = self.webrtc_tracks.get(s.topic) if HAS_WEBRTC else None
         wc = self.webcodecs_subs.get(s.topic) if HAS_WEBCODECS else None
-        if not (trs or wc):
+        wt = s.topic in self.wt_webcodecs_subs if HAS_WEBCODECS else False
+        if not (trs or wc or wt):
             return
         self._arrivals.setdefault(s.topic, deque(maxlen=8)).append(time.monotonic())
         self._in.put(s.topic, s.payload)
@@ -125,7 +142,7 @@ class MediaPlane:
         if trs:
             for tr in list(trs):
                 tr.set_latest(img)
-        if self.webcodecs_subs.get(topic):
+        if self.webcodecs_subs.get(topic) or topic in self.wt_webcodecs_subs:
             self._encode_webcodecs(topic, img, loop)
 
     def _encode_webcodecs(self, topic: str, img: Image, loop: asyncio.AbstractEventLoop) -> None:
@@ -149,10 +166,10 @@ class MediaPlane:
                 enc.time_base = Fraction(1, 1_000_000)  # pts in µs
                 enc.options = {
                     "tune": "zerolatency",
-                    "preset": "veryfast",
+                    "preset": MEDIA_H264_PRESET,
                     "profile": "baseline",  # avc1.42e0 — universal hardware decode
-                    "crf": "23",
-                    "g": str(2 * fps),  # IDR cadence ~2 s at the real rate
+                    "crf": MEDIA_H264_CRF,
+                    "g": str(max(1, round(MEDIA_H264_GOP_SECONDS * fps))),
                     "bf": "0",  # no B-frames → lower latency
                     "x264-params": "repeat-headers=1",  # SPS/PPS before every IDR → late joiners decode
                 }
@@ -190,13 +207,16 @@ class MediaPlane:
         # WebCodecs chunk wire: [u8 flags(bit0=key)][u64 ts_us BE][u16 topic_len BE][topic][NAL]
         while True:
             topic, buf, is_key, ts_us = await self._video_q.get()
-            subs = self.webcodecs_subs.get(topic)
-            if not subs:
+            subs = self.webcodecs_subs.get(topic) or set()
+            wt_wants = topic in self.wt_webcodecs_subs
+            if not subs and not wt_wants:
                 continue
             tb = topic.encode()
             head = struct.pack(">BQH", 1 if is_key else 0, ts_us & 0xFFFFFFFFFFFFFFFF, len(tb))
             frame = head + tb + buf
-            for ws in list(subs):
+            if wt_wants and self.wt_sink is not None:
+                self.wt_sink(frame)
+            for ws in list(subs or ()):
                 try:
                     # A viewer that can't take a frame within a second is wedged (dead link,
                     # frozen tab) — drop it rather than stall every other viewer behind it.

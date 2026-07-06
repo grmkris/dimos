@@ -47,7 +47,7 @@ from .cloud import CloudPlane
 from .data import DataPlane
 from .egress import SafetyEgress
 from .image import ImagePlane
-from .media import MediaPlane
+from .media import MEDIA_KINDS, MediaPlane
 from .pipe import PipePlane
 from .transports.poll import PollPlane
 from .transports.sse import SsePlane
@@ -83,7 +83,9 @@ def build_app() -> FastAPI:
     image = ImagePlane(bus)  # raw camera Image → <topic>_jpeg republished on the bus
     sse = SsePlane(bus)
     poll = PollPlane(bus)
-    pipe = PipePlane(bus, egress)
+    pipe = PipePlane(bus, egress, media_kinds=MEDIA_KINDS)
+    media.set_wt_sink(pipe.send_media)
+    pipe.on_media_subs = media.set_wt_subs
     rtc = RtcSignalRelay(pipe)  # /rtc = SDP relay; the sidecar owns the WebRTC sessions
 
     @asynccontextmanager

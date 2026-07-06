@@ -26,6 +26,8 @@
 #                 rtc-offer{rsid,sdp}   (SDP relayed from the /rtc websocket)
 #     upstream    subs{topics[]} · teleop{sid,linearX,angularZ,ttlMs} · stop{sid} · goal{x,y,z} ·
 #                 rpc{sid,id,target,method,args} · disconnect{sid} · rtc-answer{rsid,sdp|error}
+#   kind 3 = MEDIA (gateway→sidecar): WebCodecs H.264 chunk, same browser wire as /media:
+#            [u8 flags][u64 ts_us][u16 topic_len][topic][Annex-B H.264]
 #
 # Safety invariants: disconnect{sid} → deadman-cancel + zero twist for that session (egress key
 # (self, sid)); the pipe connection dropping → egress.disconnect for ALL its sids (the robot never keeps
@@ -33,7 +35,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 import json
 import struct
 from typing import Any
@@ -48,6 +50,7 @@ logger = setup_logger()
 
 KIND_DATA = 1
 KIND_JSON = 2
+KIND_MEDIA = 3
 LABEL = "dimoscope"  # base label; the sidecar appends the wire tag (WT-rs / rtc-rs) per session
 QUEUE_MAX = 4096  # frames buffered toward the sidecar; localhost UDS — should never fill
 
@@ -55,12 +58,15 @@ QUEUE_MAX = 4096  # frames buffered toward the sidecar; localhost UDS — should
 class PipePlane:
     """One-listener UDS server; at most one sidecar connection at a time (a new one replaces the old)."""
 
-    def __init__(self, bus: Bus, egress: SafetyEgress) -> None:
+    def __init__(self, bus: Bus, egress: SafetyEgress, media_kinds: Sequence[str] = ()) -> None:
         self.bus = bus
         self.egress = egress
+        self.media_kinds = list(media_kinds)
         self._conn: _Conn | None = None
         # rtc-answer{rsid,sdp|error} handler, installed by the /rtc signaling relay.
         self.on_rtc_answer: Callable[[dict[str, Any]], None] | None = None
+        # Installed by MediaPlane: the sidecar announces the union of WT-media camera subscriptions.
+        self.on_media_subs: Callable[[set[str]], None] | None = None
         bus.subscribe(self._on_sample)
         bus.on_new_topic(self._on_new_topic)
 
@@ -77,6 +83,12 @@ class PipePlane:
             return False
         conn.send_json({"op": "rtc-offer", "rsid": rsid, "sdp": sdp})
         return True
+
+    def send_media(self, frame: bytes) -> None:
+        """Send one encoded WebCodecs chunk to the sidecar, if it has WT media subscribers."""
+        conn = self._conn
+        if conn is not None:
+            conn.send_media(frame)
 
     async def start(self, path: str) -> None:
         import contextlib
@@ -112,6 +124,7 @@ class PipePlane:
                 "topics": self.bus.topic_list(),
                 "label": LABEL,
                 "rpc": self.egress.commands,
+                "media": self.media_kinds,
             }
         )
         try:
@@ -119,6 +132,8 @@ class PipePlane:
         finally:
             if self._conn is conn:
                 self._conn = None
+                if self.on_media_subs is not None:
+                    self.on_media_subs(set())
             conn.drop_all_sids()  # safety: dead sidecar must not keep the robot driving
             conn.close()
 
@@ -132,6 +147,7 @@ class _Conn:
         self.writer = writer
         # announced sub-union; on-demand — nothing flows until announced
         self.subs: set[str] = set()
+        self.media_subs: set[str] = set()
         self.sids: set[str] = set()  # sessions that touched the write path (teleop/stop/rpc)
         self._q: asyncio.Queue[bytes] = asyncio.Queue(maxsize=QUEUE_MAX)
         self._dropped = 0
@@ -163,6 +179,9 @@ class _Conn:
     def send_json(self, obj: dict[str, Any]) -> None:
         payload = json.dumps(obj).encode()
         self._enqueue(struct.pack(">IB", len(payload) + 1, KIND_JSON) + payload)
+
+    def send_media(self, frame: bytes) -> None:
+        self._enqueue(struct.pack(">IB", len(frame) + 1, KIND_MEDIA) + frame)
 
     async def _drain(self) -> None:
         try:
@@ -198,6 +217,10 @@ class _Conn:
             for topic, s in self.plane.bus.last.items():
                 if wants(self.subs, topic) and not wants(old, topic):
                     self.send_data(s.lc02)
+        elif op == "media-subs":
+            self.media_subs = set(m.get("topics") or [])
+            if self.plane.on_media_subs is not None:
+                self.plane.on_media_subs(set(self.media_subs))
         elif op == "teleop":
             self.sids.add(m["sid"])
             egress.teleop(

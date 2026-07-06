@@ -34,7 +34,14 @@ function initialTransport(): string {
 function buildServers(gateway: string): ServerOpt[] {
   const wsProto = location.protocol === "https:" ? "wss" : "ws";
   const wsBase = `${wsProto}://${gateway}`;
+  const httpBase = `${location.protocol}//${gateway}`;
+  const wtHost = gateway.replace(/\/.*$/, "").split(":")[0] || location.hostname;
   const media = { gatewayUrl: `${wsBase}/media`, kinds: ["webcodecs", "webrtc", "jpeg"] as const };
+  const wtMedia = {
+    ...media,
+    wtUrl: `https://${wtHost}:${WT_PORT}`,
+    certHashUrl: `${httpBase}/cert`,
+  };
   return [
     // Default: one WebTransport connection (data + teleop/rpc over QUIC), falls back to WebSocket.
     {
@@ -45,7 +52,7 @@ function buildServers(gateway: string): ServerOpt[] {
         await c.connect(gateway);
         return c;
       },
-      media: { ...media },
+      media: { ...wtMedia },
     },
     {
       id: "ws",

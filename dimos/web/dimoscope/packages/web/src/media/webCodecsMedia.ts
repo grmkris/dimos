@@ -146,8 +146,11 @@ export const createWebCodecsMedia = (deps: WebCodecsMediaDeps): MediaChannel => 
         frameCb?.(topic, frame, meta); // caller draws then closes the frame
       },
       error: () => {
-        const d = decoders.get(topic);
-        if (d) d.sawKey = false; // resync on the next keyframe
+        // An errored VideoDecoder is CLOSED — every later decode() throws, so resetting sawKey
+        // alone leaves the topic black forever. Rebuild the decoder and resync on the next IDR.
+        queueMicrotask(() => {
+          if (decoders.has(topic)) configure(topic, c);
+        });
       },
     });
     // Don't force hardwareAcceleration:"prefer-hardware": some Chrome contexts configure() OK but then

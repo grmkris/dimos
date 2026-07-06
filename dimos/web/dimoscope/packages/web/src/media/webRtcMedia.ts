@@ -18,6 +18,10 @@ export const createWebRtcMedia = (deps: WebRtcMediaDeps): MediaChannel => {
   let statusCb: ((s: Status) => void) | undefined;
   let latencyCb: ((id: string, ms: number) => void) | undefined;
   let statsTimer: ReturnType<typeof setInterval> | undefined;
+  let answerTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const HELLO_TIMEOUT_MS = 4000;
+  const ANSWER_TIMEOUT_MS = 4000;
 
   function connect(): Promise<void> {
     if (ws && ws.readyState <= WebSocket.OPEN) return Promise.resolve();
@@ -25,14 +29,43 @@ export const createWebRtcMedia = (deps: WebRtcMediaDeps): MediaChannel => {
       statusCb?.("connecting");
       const sock = new WebSocket(gatewayUrl);
       ws = sock;
-      sock.onopen = () => {
-        statusCb?.("open");
-        resolve();
+      const timer = setTimeout(() => {
+        sock.close();
+        reject(new Error("webrtc hello timeout"));
+      }, HELLO_TIMEOUT_MS);
+      sock.onopen = () => statusCb?.("open");
+      sock.onmessage = (e) => {
+        const media = parseHello(e);
+        if (media === undefined) return;
+        clearTimeout(timer);
+        sock.onmessage = (e2) => onSignal(e2);
+        if (media === null || media.includes("webrtc")) resolve();
+        else {
+          sock.close();
+          reject(new Error("gateway media plane lacks webrtc"));
+        }
       };
-      sock.onmessage = (e) => onSignal(e);
-      sock.onerror = () => reject(new Error("webrtc signaling ws error"));
-      sock.onclose = () => statusCb?.("closed");
+      sock.onerror = () => {
+        clearTimeout(timer);
+        reject(new Error("webrtc signaling ws error"));
+      };
+      sock.onclose = () => {
+        clearTimeout(timer);
+        statusCb?.("closed");
+      };
     });
+  }
+
+  /** The hello's media list; null = legacy hello without media; undefined = not a hello. */
+  function parseHello(e: MessageEvent): (string[] | null) | undefined {
+    if (typeof e.data !== "string") return undefined;
+    try {
+      const m = JSON.parse(e.data) as { op?: string; media?: string[] };
+      if (m.op !== "hello") return undefined;
+      return Array.isArray(m.media) ? m.media : null;
+    } catch {
+      return undefined;
+    }
   }
 
   function onSignal(e: MessageEvent): void {
@@ -44,6 +77,7 @@ export const createWebRtcMedia = (deps: WebRtcMediaDeps): MediaChannel => {
       return;
     }
     if (m.op === "webrtc-answer" && pc) {
+      clearTimeout(answerTimer);
       pc.setRemoteDescription({ type: "answer", sdp: m.sdp }).catch(() => {});
     }
   }
@@ -86,6 +120,12 @@ export const createWebRtcMedia = (deps: WebRtcMediaDeps): MediaChannel => {
     await peer.setLocalDescription(offer);
     await iceComplete(peer);
     send({ op: "webrtc-offer", sdp: peer.localDescription?.sdp, topic: streamId });
+    answerTimer = setTimeout(() => {
+      if (pc === peer) {
+        statusCb?.("closed");
+        teardownPc();
+      }
+    }, ANSWER_TIMEOUT_MS);
   }
 
   /** Non-trickle: resolve once ICE candidate gathering finishes (instant on localhost). */
@@ -140,6 +180,7 @@ export const createWebRtcMedia = (deps: WebRtcMediaDeps): MediaChannel => {
 
   function teardownPc(): void {
     clearInterval(statsTimer);
+    clearTimeout(answerTimer);
     pc?.close();
     pc = undefined;
   }

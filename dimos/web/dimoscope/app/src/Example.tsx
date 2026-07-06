@@ -5,6 +5,7 @@
 // real panels import the same hooks from ./dimos instead — a one-file typed binding over the
 // generated topic map (src/dimos.ts + `deno task gen-types`) that autocompletes topic names.
 import { useState } from "react";
+import type { geometry_msgs } from "@dimos/msgs";
 import {
   jsonPretty,
   useCommands,
@@ -27,6 +28,11 @@ export function Example() {
   const topic = picked ?? topics[0]?.topic ?? null;
   const { data, meta } = useTopicLatest(topic, { maxHz: 10 });
   const stats = useTopicStats(topic); // passive rolling window — hz / bytes/s / latency
+
+  // Typed subscription — pass the message type explicitly and `data` is that type (not unknown).
+  // dimoscope's own panels skip the generic: they import these hooks from ./dimos, where topic
+  // names autocomplete and the type is inferred from the generated map (`deno task gen-types`).
+  const pose = useTopicLatest<geometry_msgs.PoseStamped>("/nav/pose", { maxHz: 5 });
 
   // @rpc commands the gateway whitelists (RPC_COMMANDS in gateway/egress.py). Empty when none
   // are advertised — the button row simply disappears.
@@ -63,6 +69,14 @@ export function Example() {
         {meta?.latencyMs != null ? ` · ${meta.latencyMs.toFixed(1)} ms latency` : ""}
       </div>
       <pre className="json">{data !== undefined ? jsonPretty(data) : "waiting for a message…"}</pre>
+
+      {/* Fields below come straight off the typed message — no casts, autocompleted. */}
+      {pose.data && (
+        <div className="muted small">
+          typed /nav/pose · x={pose.data.pose.position.x.toFixed(2)} y=
+          {pose.data.pose.position.y.toFixed(2)}
+        </div>
+      )}
 
       {commands.length > 0 && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>

@@ -30,6 +30,8 @@ pub struct Hub {
     pub topics: Mutex<HashMap<String, String>>,
     /// rpc manifest from the gateway hello (egress whitelist), forwarded verbatim in our hello.
     pub rpc: Mutex<Value>,
+    /// Media kinds the Python gateway can encode, forwarded verbatim in our hello.
+    pub media: Mutex<Value>,
     /// Base label from the gateway hello; sessions append their wire tag (WT-rs / rtc-rs).
     pub label: Mutex<String>,
     /// JSON ops to the gateway (subs/teleop/stop/goal/rpc/disconnect). Unbounded: control-rate only.
@@ -48,6 +50,7 @@ impl Hub {
             sessions: Mutex::new(HashMap::new()),
             topics: Mutex::new(HashMap::new()),
             rpc: Mutex::new(json!([])),
+            media: Mutex::new(json!([])),
             label: Mutex::new("dimoscope".to_string()),
             upstream,
             rtc_offers: Mutex::new(None),
@@ -68,6 +71,7 @@ impl Hub {
             state: Mutex::new(SessState::default()),
             dgram: PriorityOutbox::new(),
             bulk: PriorityOutbox::new(),
+            media: PriorityOutbox::new(),
             ctl,
             bulk_written: AtomicU64::new(0),
             bulk_acked: AtomicU64::new(0),
@@ -84,6 +88,7 @@ impl Hub {
         self.sessions.lock().expect("hub lock").remove(&sid);
         self.send_upstream(json!({"op": "disconnect", "sid": sid}));
         self.announce_subs();
+        self.announce_media_subs();
     }
 
     pub fn send_upstream(&self, v: Value) {
@@ -112,6 +117,28 @@ impl Hub {
         self.send_upstream(json!({"op": "subs", "topics": topics}));
     }
 
+    /// Recompute the WT-media sub-union across sessions and announce it to the gateway encoder.
+    pub fn announce_media_subs(&self) {
+        let union: HashSet<String> = {
+            let sessions = self.sessions.lock().expect("hub lock");
+            sessions
+                .values()
+                .flat_map(|s| {
+                    s.state
+                        .lock()
+                        .expect("session lock")
+                        .media_subs
+                        .iter()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                })
+                .collect()
+        };
+        let mut topics: Vec<&String> = union.iter().collect();
+        topics.sort();
+        self.send_upstream(json!({"op": "media-subs", "topics": topics}));
+    }
+
     /// Fan a bus frame out to every interested session. `framed` = [f64be ingress-ms][LC02], stamped
     /// once by the pipe reader and shared (mirrors the WS data plane's once-per-sample stamp).
     pub fn route(&self, topic: &str, typ: &str, framed: &Bytes) {
@@ -123,6 +150,14 @@ impl Hub {
         let default = default_priority(topic, typ);
         for sess in sessions.values() {
             sess.offer(topic, default, framed, now);
+        }
+    }
+
+    /// Fan one encoded H.264 chunk to every WT media session subscribed to its camera topic.
+    pub fn route_media(&self, topic: &str, frame: &Bytes) {
+        let sessions = self.sessions.lock().expect("hub lock");
+        for sess in sessions.values() {
+            sess.offer_media(topic, frame);
         }
     }
 
@@ -158,6 +193,7 @@ impl Hub {
 #[derive(Default)]
 struct SessState {
     subs: HashSet<String>,
+    media_subs: HashSet<String>,
     rate: HashMap<String, f64>, // per-topic maxHz cap
     last: HashMap<String, f64>, // per-topic last-delivery ms (downsample state)
     qos: HashMap<String, Lane>, // client-declared QoS overrides
@@ -178,6 +214,8 @@ pub struct Session {
     /// Big frames for the persistent uni stream — its writer awaits, so QUIC flow control pushes
     /// backpressure into this outbox where conflation keeps the backlog fresh.
     pub bulk: PriorityOutbox,
+    /// Encoded camera chunks for WT WebCodecs; conflated per topic on a dedicated stream.
+    pub media: PriorityOutbox,
     /// Control JSON to the browser (hello/topic/pong/rpc-res), written by the control-stream task.
     pub ctl: mpsc::UnboundedSender<Value>,
     /// WT bulk credit: cumulative raw bytes written to / acked consumed from the bulk uni stream
@@ -199,6 +237,7 @@ impl Session {
             "topics": hub.topic_list(),
             "label": format!("{}/{}", hub.label.lock().expect("hub lock"), self.tag),
             "rpc": hub.rpc.lock().expect("hub lock").clone(),
+            "media": hub.media.lock().expect("hub lock").clone(),
         })
     }
 
@@ -221,6 +260,21 @@ impl Session {
             &self.bulk
         };
         outbox.put_data(topic, lane, framed.clone());
+    }
+
+    fn offer_media(&self, topic: &str, frame: &Bytes) {
+        let st = self.state.lock().expect("session lock");
+        if !st.media_subs.contains(topic) {
+            return;
+        }
+        drop(st);
+        // H.264 deltas are NOT independent — conflating (keep-latest-1) silently drops a delta the
+        // moment the drain lags one chunk, feeding the decoder a frame whose reference is gone
+        // (corruption/decoder error until the next IDR). Use the ordered non-conflating lane; its
+        // bounded depth only sheds under a sustained 16-chunk backlog, and the browser resyncs on
+        // the next keyframe when that happens.
+        self.media
+            .put_data(topic, crate::outbox::LANE_DEFAULT, frame.clone());
     }
 
     /// Handle one control-stream op from the browser — the same control protocol as the data WS.
@@ -254,6 +308,28 @@ impl Session {
                 st.qos.remove(t);
                 drop(st);
                 hub.announce_subs();
+            }
+            "media-start" => {
+                let Some(t) = m.get("topic").and_then(Value::as_str) else {
+                    return;
+                };
+                self.state
+                    .lock()
+                    .expect("session lock")
+                    .media_subs
+                    .insert(t.to_string());
+                hub.announce_media_subs();
+            }
+            "media-stop" => {
+                let Some(t) = m.get("topic").and_then(Value::as_str) else {
+                    return;
+                };
+                self.state
+                    .lock()
+                    .expect("session lock")
+                    .media_subs
+                    .remove(t);
+                hub.announce_media_subs();
             }
             "rate" => {
                 let Some(t) = m.get("topic").and_then(Value::as_str) else {
@@ -492,5 +568,25 @@ mod tests {
         assert_eq!(disc["sid"], json!(sess.sid));
         let subs2 = rx.try_recv().unwrap();
         assert_eq!(subs2["topics"], json!([]));
+    }
+
+    #[test]
+    fn media_subscribe_routes_only_requested_camera_chunks() {
+        let (hub, mut rx) = hub();
+        let (ctl, _ctl_rx) = mpsc::unbounded_channel();
+        let sess = hub.add_session(ctl, "WT-rs");
+        sess.on_control(&hub, &json!({"op": "media-start", "topic": "/cam"}));
+        let subs = rx.try_recv().unwrap();
+        assert_eq!(subs["op"], "media-subs");
+        assert_eq!(subs["topics"], json!(["/cam"]));
+
+        hub.route_media("/other", &Bytes::from_static(b"other"));
+        assert!(!futures_ready(&sess.media));
+        hub.route_media("/cam", &Bytes::from_static(b"chunk"));
+        assert_eq!(&block_get(&sess.media).unwrap()[..], b"chunk");
+
+        sess.on_control(&hub, &json!({"op": "media-stop", "topic": "/cam"}));
+        let subs = rx.try_recv().unwrap();
+        assert_eq!(subs["topics"], json!([]));
     }
 }

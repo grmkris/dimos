@@ -1,6 +1,7 @@
 //! Pipe client: the sidecar's feed from the Python gateway (gateway/pipe.py) over a unix socket.
 //! Reconnects with backoff; the gateway listens. Framing [u32be len][u8 kind][payload]:
 //! kind 1 = DATA (raw LC02 packet — topic/type live inside the channel), kind 2 = JSON.
+//! kind 3 = MEDIA (encoded WebCodecs chunk: [flags][ts_us][topic_len][topic][H.264]).
 //!
 //! DATA frames are stamped [f64be now-ms] ONCE at this ingress point and the framed Bytes shared
 //! across all sessions — the same place the WS data plane stamps (gateway ingress, _common.frame),
@@ -20,6 +21,7 @@ use crate::session::{now_ms, Hub};
 
 const KIND_DATA: u8 = 1;
 const KIND_JSON: u8 = 2;
+const KIND_MEDIA: u8 = 3;
 
 /// Parse an LC02 packet's channel: "LC02"<u32be seq><channel>\0<payload>,
 /// channel = "<topic>#<pkg>.<Type>". Port of bus.py `_parse_channel` / frame.ts `splitChannel`.
@@ -104,6 +106,7 @@ async fn read_loop(
         match kind {
             KIND_DATA => on_data(&hub, body),
             KIND_JSON => on_json(&hub, &body),
+            KIND_MEDIA => on_media(&hub, body),
             other => bail!("unknown pipe frame kind {other}"),
         }
     }
@@ -142,6 +145,26 @@ fn on_data(hub: &Hub, lc02: Bytes) {
     hub.route(&topic, &typ, &framed.freeze());
 }
 
+fn parse_media_topic(frame: &[u8]) -> Option<&str> {
+    if frame.len() < 11 {
+        return None;
+    }
+    let topic_len = u16::from_be_bytes(frame[9..11].try_into().ok()?) as usize;
+    if frame.len() < 11 + topic_len {
+        return None;
+    }
+    std::str::from_utf8(&frame[11..11 + topic_len]).ok()
+}
+
+fn on_media(hub: &Hub, frame: Bytes) {
+    let Some(topic) = parse_media_topic(&frame) else {
+        warn!("pipe MEDIA frame is malformed — dropped");
+        return;
+    };
+    let topic = topic.to_string();
+    hub.route_media(&topic, &frame);
+}
+
 fn on_json(hub: &Hub, body: &[u8]) {
     let m: Value = match serde_json::from_slice(body) {
         Ok(v) => v,
@@ -170,6 +193,7 @@ fn on_json(hub: &Hub, body: &[u8]) {
                 *hub.label.lock().expect("hub lock") = label.to_string();
             }
             *hub.rpc.lock().expect("hub lock") = m.get("rpc").cloned().unwrap_or(json!([]));
+            *hub.media.lock().expect("hub lock") = m.get("media").cloned().unwrap_or(json!([]));
             info!(
                 "gateway hello: {} topics",
                 hub.topics.lock().expect("hub lock").len()
@@ -240,5 +264,17 @@ mod tests {
         no_nul.extend_from_slice(&1u32.to_be_bytes());
         no_nul.extend_from_slice(b"/never-terminated");
         assert_eq!(parse_channel(&no_nul), None);
+    }
+
+    #[test]
+    fn parse_media_topic_reads_webcodecs_frame_topic() {
+        let mut frame = Vec::new();
+        frame.push(1); // keyframe flag
+        frame.extend_from_slice(&123u64.to_be_bytes());
+        frame.extend_from_slice(&5u16.to_be_bytes());
+        frame.extend_from_slice(b"/cam1");
+        frame.extend_from_slice(b"h264");
+        assert_eq!(parse_media_topic(&frame), Some("/cam1"));
+        assert_eq!(parse_media_topic(&frame[..10]), None);
     }
 }

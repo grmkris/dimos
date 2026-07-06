@@ -80,6 +80,8 @@ export { createWebRtcMedia } from "./media/webRtcMedia.ts";
 export type { WebRtcMediaDeps } from "./media/webRtcMedia.ts";
 export { createWebCodecsMedia } from "./media/webCodecsMedia.ts";
 export type { WebCodecsMediaDeps } from "./media/webCodecsMedia.ts";
+export { createWebTransportWebCodecsMedia } from "./media/webTransportWebCodecsMedia.ts";
+export type { WebTransportWebCodecsMediaDeps } from "./media/webTransportWebCodecsMedia.ts";
 export type { MediaCaps, MediaChannel, MediaKind, VideoMeta } from "./types.ts";
 export type { MediaDeps } from "./media.ts";
 export { rawToRGBA, rawToVideoFrame } from "./media/pixels.ts";

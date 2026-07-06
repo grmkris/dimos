@@ -197,6 +197,7 @@ async fn handle_session(
         knobs.dgram_ttl_ms,
     ));
     let bulk = tokio::spawn(drain_bulk(conn.clone(), sess.clone(), knobs));
+    let media = tokio::spawn(drain_media(conn.clone(), sess.clone()));
     let stats = (knobs.stats_s > 0.0)
         .then(|| tokio::spawn(session_stats(conn.clone(), sess.clone(), knobs.stats_s)));
 
@@ -206,6 +207,7 @@ async fn handle_session(
     ctl.abort();
     dgrams.abort();
     bulk.abort();
+    media.abort();
     if let Some(s) = stats {
         s.abort();
     }
@@ -363,6 +365,38 @@ async fn drain_bulk(conn: Arc<Connection>, sess: Arc<Session>, knobs: SessionKno
             tokio::time::sleep(std::time::Duration::from_secs_f64(secs)).await;
         }
     }
+}
+
+/// Encoded H.264 chunks for WebCodecs WT media. This is a dedicated stream, prioritized above the
+/// bulk topic stream and below control; the media outbox is per-topic conflated before writes.
+async fn drain_media(conn: Arc<Connection>, sess: Arc<Session>) {
+    let mut media: Option<wtransport::SendStream> = None;
+    loop {
+        let frame = sess.media.get().await;
+        if send_media(&conn, &mut media, &frame).await.is_err() {
+            error!(
+                sid = sess.sid,
+                "media stream write failed — session drain stopped"
+            );
+            return;
+        }
+    }
+}
+
+async fn send_media(
+    conn: &Connection,
+    media: &mut Option<wtransport::SendStream>,
+    frame: &Bytes,
+) -> Result<()> {
+    if media.is_none() {
+        let s = conn.open_uni().await?.await?;
+        s.set_priority(0); // control=1, media=0, bulk=-1
+        *media = Some(s);
+    }
+    let s = media.as_mut().expect("media stream just opened");
+    s.write_all(&(frame.len() as u32).to_be_bytes()).await?;
+    s.write_all(frame).await?;
+    Ok(())
 }
 
 async fn send_bulk(

@@ -32,8 +32,13 @@ export interface ServerOpt {
   /** Gateway WS URL, when this server is a plain gateway transport (lets a panel open a sibling
    *  client to the same gateway). Absent for webrtc. */
   url?: string;
-  /** Media-plane config: WebRTC gateway + which kinds it serves. Absent → the Image-topic floor. */
-  media?: { gatewayUrl?: string; kinds?: readonly MediaKind[] };
+  /** Media-plane config: WebRTC/WebCodecs gateway, optional WT media carrier, and served kinds. */
+  media?: {
+    gatewayUrl?: string;
+    wtUrl?: string;
+    certHashUrl?: string;
+    kinds?: readonly MediaKind[];
+  };
 }
 
 interface DimosCtx {
@@ -491,6 +496,8 @@ export function useVideo(
 
   const mediaCfg = servers.find((s) => s.id === activeId)?.media;
   const gatewayUrl = mediaCfg?.gatewayUrl;
+  const wtUrl = mediaCfg?.wtUrl;
+  const certHashUrl = mediaCfg?.certHashUrl;
   const serverMedia = mediaCfg?.kinds;
 
   useEffect(() => {
@@ -545,7 +552,14 @@ export function useVideo(
     (async () => {
       for (const kind of MODE_PREFER[mode]) {
         if (!alive) return;
-        const ch = selectMediaChannel({ client, gatewayUrl, serverMedia, prefer: [kind] });
+        const ch = selectMediaChannel({
+          client,
+          gatewayUrl,
+          wtUrl,
+          certHashUrl,
+          serverMedia,
+          prefer: [kind],
+        });
         if (kindOf(ch) !== kind) {
           ch.close(); // kind unoffered/unsupported → selectMediaChannel floored it; try the next
           continue;
@@ -565,7 +579,7 @@ export function useVideo(
       current?.unsubscribe(topic);
       current?.close();
     };
-  }, [client, topic, mode, gatewayUrl, serverMedia]);
+  }, [client, topic, mode, gatewayUrl, wtUrl, certHashUrl, serverMedia]);
 
   return {
     kind,

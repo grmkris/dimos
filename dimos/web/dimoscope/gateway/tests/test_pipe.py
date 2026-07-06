@@ -31,7 +31,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent.parent.parent))  # dimoscop
 
 from gateway.bus import Bus
 from gateway.egress import SafetyEgress
-from gateway.pipe import KIND_DATA, KIND_JSON, PipePlane
+from gateway.pipe import KIND_DATA, KIND_JSON, KIND_MEDIA, PipePlane
 
 
 class FakeVec:
@@ -73,7 +73,9 @@ class Harness:
     async def __aenter__(self):
         self.bus = Bus()
         self.egress, self.pub = _egress()
-        self.plane = PipePlane(self.bus, self.egress)
+        self.media_subs = []
+        self.plane = PipePlane(self.bus, self.egress, media_kinds=["webcodecs", "jpeg"])
+        self.plane.on_media_subs = lambda topics: self.media_subs.append(topics)
         self.path = tempfile.mktemp(suffix=".sock")
         self.server_task = asyncio.ensure_future(self.plane.start(self.path))
         for _ in range(100):  # wait for the listener
@@ -123,6 +125,7 @@ def test_hello_meta_on_connect():
             assert hello["label"] == "dimoscope"  # base label; the sidecar appends the wire tag
             assert hello["topics"] == []
             assert isinstance(hello["rpc"], list) and hello["rpc"]  # egress whitelist forwarded
+            assert hello["media"] == ["webcodecs", "jpeg"]
 
     asyncio.run(run())
 
@@ -268,5 +271,25 @@ def test_connected_tracks_the_live_sidecar():
             h.writer.close()  # sidecar dies
             await h.settle()
             assert not h.plane.connected  # /cert must 503 — the hash file is stale now
+
+    asyncio.run(run())
+
+
+def test_media_subs_and_frames_use_dedicated_pipe_kind():
+    async def run():
+        async with Harness() as h:
+            await h.read_json()
+            h.send_json({"op": "media-subs", "topics": ["/cam"]})
+            await h.settle()
+            assert h.media_subs[-1] == {"/cam"}
+
+            frame = b"\x01" + (123).to_bytes(8, "big") + (4).to_bytes(2, "big") + b"/cam" + b"h264"
+            h.plane.send_media(frame)
+            kind, body = await h.read_frame()
+            assert (kind, body) == (KIND_MEDIA, frame)
+
+            h.writer.close()
+            await h.settle()
+            assert h.media_subs[-1] == set()
 
     asyncio.run(run())
