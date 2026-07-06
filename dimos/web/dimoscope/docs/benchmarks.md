@@ -12,6 +12,31 @@ deno task load                    # /load/* lanes + the crankable flood (`deno t
 # open http://localhost:8080/ → Topics tab → Benchmark drawer
 ```
 
+## 0. The 5-minute overload check — huge cloud beside a fast lane
+
+The "does a high-priority stream survive a flood?" experiment, hands-on (no bench drawer needed):
+
+1. `deno task serve` + `deno task load`, open http://localhost:8080/?transport=webtransport →
+   **Topics** tab. Subscribe `/load/fast` (command-class lane) and `/load/cloud` — each stream card
+   shows live hz / kB/s / latency.
+2. Crank the flood: Benchmark drawer → a generator tier (`dense` 20 MB/s and up), or from the
+   devtools console `client.modules.GO2Load.start_bench(hz, bytes, "cloud")`. Watch `/load/fast`
+   hold its hz and ~ms latency while the bulk lane sheds — conflate-to-freshest by design, so bulk
+   deliv% drops but staleness does not grow.
+3. Degrade the network (Linux, `deno task netem:install` once): topbar netem → `wifi-crowded` or
+   `loss-5`. Flip the transport dropdown ws ↔ webtransport: on `/ws` the fast lane's p95 inflates
+   with the flood (TCP head-of-line); on WT it stays flat (datagram lane, drop-oldest).
+4. The measured version of the same thing: bench drawer, `pose` + heavy profiles, `?coex=1`, sweep
+   `clean,wifi-crowded` — read the **fast p95** column and the **×N interference chip** per wire.
+   Every export embeds a paste-to-reproduce `?run=1` URL.
+5. Point-cloud-specific: **Clouds** tab (`?tab=clouds`) compares raw / `_ds` / `_draco` of the same
+   live scan side-by-side with per-cell kB/s; WorldView's lidar `raw|ds|draco` toggle shows the
+   bandwidth cut (~7× Draco at full point density) without changing the render.
+
+Expected behavior: command/sensor lanes keep hz + freshness at every flood tier (the outbox sheds
+bulk, never control); bulk conflates to the freshest frame (deliv% < 100 under overload is the drop
+policy working, not a defect); §3 has the measured envelope per wire.
+
 ---
 
 ## 1. The benchmark — in the real browser, across transports

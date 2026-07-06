@@ -139,6 +139,8 @@ uv run pytest dimos/web/dimoscope/gateway/tests -q  # gateway unit tests — run
 deno task fmt && deno task lint
 ```
 
+What's rough or deliberately deferred (and why): [docs/status.md](docs/status.md).
+
 `deno task serve` builds the **native WT sidecar** (Rust) with cargo, then launches it beside the
 gateway — the sidecar owns UDP `:8443`, fed over a unix socket (`gateway/pipe.py`). To iterate on the
 sidecar alone, run `uv run python -m gateway` + `deno task wt-sidecar` in separate shells: kill/rebuild
