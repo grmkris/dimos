@@ -71,7 +71,7 @@ drops into any app unchanged.
 | typed topic names + RPC | [`app/src/dimos.ts`](../app/src/dimos.ts) | `createDimosHooks` over the generated map |
 | a low-rate readout | [`app/src/panels/PoseReadout.tsx`](../app/src/panels/PoseReadout.tsx) | `useTopicLatest` |
 | live per-topic stats | [`app/src/panels/StatsBar.tsx`](../app/src/panels/StatsBar.tsx) | `useTopics` + `useTopicStats` |
-| a camera view | [`app/src/panels/CameraView.tsx`](../app/src/panels/CameraView.tsx) | `useVideo` (webrtc/webcodecs/jpeg, negotiated) |
+| a camera view | [`app/src/panels/CameraView.tsx`](../app/src/panels/CameraView.tsx) | `useVideo` (webcodecs/webrtc/jpeg, negotiated) |
 | teleop with a deadman | [`app/src/panels/TeleopPad.tsx`](../app/src/panels/TeleopPad.tsx) | `useTeleop` |
 | RPC command buttons | [`app/src/panels/CommandsPanel.tsx`](../app/src/panels/CommandsPanel.tsx) | `useCommands` + `useRpc` |
 | 60 fps canvas viz | [`app/src/panels/WorldView.tsx`](../app/src/panels/WorldView.tsx) | `useTopicRef` + rAF (no re-render per message) |
@@ -109,7 +109,7 @@ Media, control, misc:
 
 | Export | One-liner |
 | --- | --- |
-| `useVideo` | camera via the negotiated media plane (webrtc → webcodecs → jpeg floor) |
+| `useVideo` | camera via the negotiated media plane (webcodecs → webrtc → jpeg floor) |
 | `useImageTopic` | paint a raw/jpeg `sensor_msgs.Image` topic into a canvas |
 | `useTeleop` | `drive(lin, ang)` / `stop()` — the gateway clamps velocity + runs a TTL deadman |
 | `useRpc` | `call(target, method, ...args)` for whitelisted `@rpc` commands |

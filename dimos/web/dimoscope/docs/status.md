@@ -18,13 +18,15 @@ rough, what's out of scope, and the todo for each.
 - Teleop trust boundary: velocity clamp, TTL deadman, stop-on-disconnect, server-side RPC whitelist.
 - Build-your-own-webapp path: [packages/web/README.md](../packages/web/README.md), typed topics +
   commands via `deno task gen-types`, `Example.tsx` reference panel.
+- Video latency: the Camera panel shows a live glass-to-glass readout; WebRTC plays out with a
+  zeroed jitter buffer; every transcode plane (media/image/cloud) ingests freshest-wins
+  (`ConflatedIngest`) — a slow encoder lowers fps, never adds lag
+  ([video-latency-2026-07-06.md](video-latency-2026-07-06.md)).
+- Runs control: `/runs` (`RUNS_CTL=1`) starts/stops an allowlisted blueprint or recorded replay
+  from the app's topbar — the same `dimos run` an operator types; shell-started and UI-started
+  runs share the run registry, so both show up and either side can stop them.
 
 ## Known issues
-
-- **Video latency**: the Camera panel shows a live glass-to-glass readout; WebRTC plays out with a
-  zeroed jitter buffer. Open: `gateway/media.py` feeds the encoder through a FIFO — under sustained
-  encode-slower-than-camera it delays instead of dropping stale frames. The fix shape is a depth-1
-  latest-frame mailbox per topic.
 - **Safari / Firefox**: no (stable) WebTransport → Auto falls back to WS. Works, but without lane
   isolation; the fallback is the documented behavior, not a bug.
 - **Sidecar is a build step**: WebTransport/WebRTC need the Rust sidecar (`cargo build`, ~2 min once).
@@ -59,5 +61,7 @@ rough, what's out of scope, and the todo for each.
 Complementary planes, not competitors: the CF/LiveKit SFU path is internet operator teleop —
 commands + video through any NAT with managed auth; dimoscope is the full-bus developer cockpit —
 every topic, QoS, benchmarks, on LAN or a reachable host. The numbers agree across both efforts:
-SCTP DataChannels carry ~1–4 MB/s of data; WebTransport carries 16–19 MB/s with lane isolation.
-Video rides WebRTC media in both.
+SCTP DataChannels carry ~1–4 MB/s of data; WebTransport carries 16–19 MB/s with lane isolation and,
+with the bulk credit gate, matches WebRTC's small-lane freshness on rate-capped links
+([bench-results-2026-07-06-gate.md](bench-results-2026-07-06-gate.md)). Video rides WebRTC media
+in both.

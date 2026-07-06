@@ -15,8 +15,9 @@ robot / sim ─► DimOS bus (LCM | Zenoh)
            WS  /ws          data plane: topics + teleop/goal/rpc  (the trust boundary)
            GET /sse · /poll Server-Sent Events · HTTP long-poll
            WS  /rtc         WebRTC signaling (the sidecar owns the DataChannel sessions)
-           WS  /media       camera: webrtc / webcodecs / jpeg
+           WS  /media       camera: webcodecs / webrtc / jpeg
            GET /cert        the sidecar's self-signed cert hash
+           /runs            start/stop a blueprint or recorded replay (RUNS_CTL=1 → topbar control)
          Derived bus topics: raw camera Image → <topic>_jpeg (TurboJPEG; IMAGE_JPEG=0 to disable,
          IMAGE_JPEG_QUALITY=75) and PointCloud2 → <topic>_ds/_draco — the browser rides these
          instead of multi-MB raw frames (docs/video-latency-2026-07-06.md).

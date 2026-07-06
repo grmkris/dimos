@@ -284,13 +284,20 @@ small lanes alone; bulk = the steady-state flood; crowded rows use a 20 s window
 - QUIC handshakes fail under loss (connect first, then apply); Auto falls back to WS when WT can't
   establish. The outage buttons (`UDP 3s/10s`, `all 10s`) cover fallback/reconnect timing.
 
-Recommendation: `Auto (WT→WS)` — WT-rs where UDP works, WebSocket everywhere else.
+Recommendation: `Auto (WT→WS)` — WT-rs where UDP works, WebSocket everywhere else. With the bulk
+credit gate (below), WT-rs matches or beats WebRTC data on every measured cell
+([bench-results-2026-07-06-gate.md](bench-results-2026-07-06-gate.md)).
 
-Two design constraints behind those numbers (`wt-sidecar/src/main.rs`):
+Three design constraints behind those numbers (`wt-sidecar/src/main.rs`):
 - Separate datagram and bulk drain tasks per session: datagrams never `await` behind a
   flow-control-stalled 1 MB bulk write, so pose stays fresh while bulk saturates a shaped link.
 - BBR congestion control: cubic builds a standing queue on a shaped link (bufferbloat) that delays
   every datagram by the queue depth; BBR keeps inflight ≈ BDP.
+- The bulk credit gate: the browser acks consumed bulk-stream bytes (`{op:"bulk-ack"}`) and the
+  drain keeps `written − acked` under `max(WT_BULK_MIN, ack-rate × WT_BULK_TARGET_MS)` — at most
+  ~250 ms of standing bulk queue at any link rate, where a fixed send window alone is 6 s of
+  bufferbloat at 2 Mbit. Clean-path throughput is untouched (the budget scales past BDP on a fast
+  link). A/B on every cell: [bench-results-2026-07-06-gate.md](bench-results-2026-07-06-gate.md).
 
 ### WebRTC DataChannels (2026-07-02 · same VPS link, same day)
 
@@ -314,8 +321,12 @@ relay. Rows self-identify `wire: dimoscope/rtc-rs`.
   lanes independently. Protocol shape, not implementation.
 - The clean-path bulk gap is the userspace SCTP stack: 3.2 MB/s over a ~28 ms path (16.9 MB/s on
   loopback, where cwnd doesn't bite) vs QUIC/BBR's 18.3.
-- Where WebRTC does win: browser↔browser (no server in the path) and media — the camera plane
-  (`/media`) already rides WebRTC video tracks with hardware codecs.
+- What WebRTC data remains for: UDP-blocked networks (where WT can't establish) and
+  browser↔browser (no server in the path); media rides WebRTC video tracks on the separate camera
+  plane (`/media`). The one latency edge WebRTC data held — small-lane freshness beside bulk on a
+  rate-capped link — is closed by the bulk credit gate: fast-lane p95 beside a flood measures
+  0.28–0.48 s on WT (gate on) vs 0.27–0.53 s on WebRTC, from 1.3–6.9 s gate-off
+  ([bench-results-2026-07-06-gate.md](bench-results-2026-07-06-gate.md)).
 - The ordering reproduces on a second, independently deployed host (an EC2 box also running the
   sim): WT 18.9 MB/s clean / 10.6 at loss-5 with the fast lane at ~84 Hz beside it; WebRTC bulk
   ~4 MB/s clean, near-zero under any shaping. Stability differs by host: in 30 s-per-cell runs the
@@ -418,16 +429,22 @@ IP + per-device AES-128 key), point `go2-load` / `unitree_go2` at the hardware, 
 
 | env | default | what |
 |---|---|---|
-| `HOST` / `PORT` | `0.0.0.0` / `8080` | HTTP/WS bind — app + `/ws /sse /poll /rtc /media /cert /health /netem` |
+| `HOST` / `PORT` | `0.0.0.0` / `8080` | HTTP/WS bind — app + `/ws /sse /poll /rtc /media /cert /health /netem /runs` |
 | `WT_PORT` | `8443` | WebTransport QUIC/UDP port (read by the sidecar; the app assumes 8443) |
 | `RTC_PORT` | `8444` | WebRTC muxed UDP port — every session shares it (one firewall rule) |
-| `RTC_PUBLIC_IP` | off | 1:1-NAT hosts (EC2 & co.): the NIC carries a private address, so ICE would advertise unreachable candidates — set the public IP to advertise instead |
+| `RTC_PUBLIC_IP` | off | the single ICE candidate to advertise. Needed on 1:1-NAT hosts (EC2 & co.: the NIC carries a private address) **and** on macOS localhost (webrtc-rs multi-interface host candidates fail matching — `no such remote`); set it to the host's reachable IP |
 | `WT_PIPE` | `/tmp/dimoscope-wt.sock` | gateway↔sidecar unix socket (gateway listens, sidecar reconnects) |
 | `WT_CERT_HASH_FILE` | `/tmp/dimoscope-wt-cert.hash` | sidecar writes its cert SHA-256 here; `/cert` serves it |
 | `EGRESS_KBPS` | off | explicit hard cap: pace each client's egress to a known link budget |
 | `WT_SEND_WINDOW` | `1500000` | cap quinn's connection send buffer so bulk backlog stays in the outbox (conflated fresh), not quinn's ~10 MB default. > clean-WAN BDP, so clean throughput is intact |
 | `WT_DGRAM_TTL_MS` | `200` | drop a pose datagram older than this at drain time (post-stall staleness bound; 0 = off) |
 | `WT_DGRAM_BUF` | `16384` | quinn datagram send-buffer bytes — small = drop-oldest → newest pose wins under a stall |
+| `WT_DGRAM_RECV_BUF` | `1048576` | quinn datagram receive buffer — pins datagram-support advertising in the transport params |
+| `WT_BULK_TARGET_MS` | `250` | bulk credit gate: keep ≤ this many ms of receiver-acked standing bulk queue at any link rate (`0` = off) |
+| `WT_BULK_MIN` | `65536` | credit budget floor in bytes — the pre-first-ack allowance and the slow-link minimum |
+| `WT_STATS_S` | off | `>0` = per-session queue diagnostics every N s (cwnd · rtt · udp-tx rate · bulk written/acked/outstanding) |
+| `IMAGE_JPEG` / `IMAGE_JPEG_QUALITY` | `1` / `75` | image plane: republish each raw camera Image as `<topic>_jpeg` (TurboJPEG, ~100 KB vs ~2.8 MB) |
+| `RUNS_CTL` | off | enable `/runs` — start/stop an allowlisted blueprint or recorded replay from the app's topbar |
 | `WS_SNDBUF` | `262144` | bound the /ws kernel send buffer so WAN backlog stays in the priority outbox (0 = OS autotuning) |
 | `WS_DEFLATE` | off | `1` re-enables /ws permessage-deflate (off by default — pure CPU on incompressible sensor frames) |
 | `QOS_RULES` | `qos.rules.json` | topic-glob → lane override map (see `qos.rules.example.json`) — read by the gateway **and** the sidecar |
