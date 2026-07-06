@@ -20,6 +20,11 @@ webrtc).
 Loopback (uncapped) before-numbers hid the problem entirely: 14 fps / 16 ms with 43 MB/s on the
 wire. The wire budget is the story, not CPU.
 
+Real-WAN spot check (Mac → company VPS `63.177.113.161`, rtt ~42 ms, mujoco go2-load dog at 5 fps
+camera): jpeg mode rides `_jpeg` at source rate, ~0.1–0.2 MB/s. That gateway has no PyAV/aiortc —
+forcing webcodecs now falls back visibly (`⚠ wanted webcodecs, using jpeg`) instead of a silent
+black canvas. Cross-machine `age` readouts are clock-offset-limited; trust them on same-host only.
+
 ## What was wrong (one line each)
 
 1. **No transcode existed** — the "jpeg floor" shipped whatever the topic carries; for the go2
