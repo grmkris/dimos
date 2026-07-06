@@ -104,7 +104,8 @@ verdict is:
 
 Use WebTransport for robot data where UDP is available, WebRTC for camera media, and WebSocket as
 the reachability fallback. Full methodology, QoS model, current transport/video/cloud numbers, VPS
-runbook, and env reference live in [`docs/benchmarks.md`](docs/benchmarks.md).
+runbook, env reference, and copy-paste preset URLs live in
+[`docs/benchmarks.md`](docs/benchmarks.md#preset-urls).
 
 ## Development
 

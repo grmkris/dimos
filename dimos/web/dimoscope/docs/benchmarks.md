@@ -55,6 +55,32 @@ Useful URL parameters:
 ?run=1
 ```
 
+### Preset URLs
+
+Use these with `deno task app` running locally. Replace `<gw-host>` with the machine running the
+gateway. Use `localhost%3A8080` instead of `<gw-host>%3A8080` for a fully local run. The URLs
+preselect the drawer; append `&run=1` to auto-start after load.
+
+Main transport comparison:
+
+```text
+http://localhost:5173/?gw=<gw-host>%3A8080&transport=webtransport&profiles=pose%2Clidar%2Cdense&coex=1&net=clean%2Cwifi-normal%2Cwifi-crowded%2Closs-5&dur=15000
+http://localhost:5173/?gw=<gw-host>%3A8080&transport=webrtc&profiles=pose%2Clidar%2Cdense&coex=1&net=clean%2Cwifi-normal%2Cwifi-crowded%2Closs-5&dur=15000
+http://localhost:5173/?gw=<gw-host>%3A8080&transport=ws&profiles=pose%2Clidar%2Cdense&coex=1&net=clean%2Cwifi-normal%2Cwifi-crowded%2Closs-5&dur=15000
+```
+
+Point-cloud compression:
+
+```text
+http://localhost:5173/?gw=<gw-host>%3A8080&transport=webtransport&profiles=cloud%2Ccloud-ds%2Ccloud-draco&net=clean&dur=15000
+```
+
+On-demand bandwidth cut:
+
+```text
+http://localhost:5173/?gw=<gw-host>%3A8080&transport=ws&profiles=all-lanes%2Con-demand&net=clean&dur=10000
+```
+
 ## QoS Model
 
 QoS is enforced at the browser egress, where robot bus QoS cannot help. Defaults classify topics into

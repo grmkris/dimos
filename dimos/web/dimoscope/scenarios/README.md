@@ -54,6 +54,12 @@ different axes:
 - `cam`: heavy image/depth/point-cloud traffic.
 
 For the standard synthetic benchmark source, use `deno task scope:bench` or `deno task load`.
+This preset assumes the `/load/*` benchmark source is running; scenario publishers expose their own
+topics but use the same drawer:
+
+```text
+http://localhost:5173/?gw=<gw-host>%3A8080&transport=webtransport&profiles=pose%2Clidar%2Cdense&coex=1&dur=15000
+```
 
 ## Remote
 
