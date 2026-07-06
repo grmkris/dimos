@@ -19,8 +19,10 @@ import { CloudCompare } from "./panels/clouds/CloudCompare";
 import { Example } from "./Example";
 import { BenchDrawer, hasBenchParams } from "./panels/bench/BenchDrawer";
 import { TopbarNetem } from "./panels/TopbarNetem";
+import { TopbarRuns } from "./panels/TopbarRuns";
 import { normalizeGateway, recentGateways, useGateway } from "./gateway";
 import { NetemProvider } from "./netem";
+import { RunsProvider } from "./runs";
 import { getParam, setUrlParam } from "./urlState";
 
 // ?tab=worldview|topics|clouds|example picks the page; bench params imply the Topics tab (where the drawer lives).
@@ -92,6 +94,7 @@ export function App() {
 
   return (
     <NetemProvider>
+    <RunsProvider>
     <div className="layout">
       <header className="topbar">
         <span
@@ -128,6 +131,7 @@ export function App() {
           </button>
         </div>
         <div className="topbar-right">
+          <TopbarRuns />
           <TopbarNetem />
           {servers.length > 1 && (
             <select
@@ -250,6 +254,7 @@ export function App() {
         </div>
       )}
     </div>
+    </RunsProvider>
     </NetemProvider>
   );
 }

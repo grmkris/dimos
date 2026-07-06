@@ -40,7 +40,7 @@ from fastapi.staticfiles import StaticFiles
 
 from dimos.utils.logging_config import setup_logger
 
-from . import netem, qos
+from . import netem, qos, runs
 from .bus import Bus
 from .cloud import CloudPlane
 from .data import DataPlane
@@ -138,6 +138,10 @@ def build_app() -> FastAPI:
     # Browser-controlled network conditions (bench): OFF unless NETEM_CTL=1 (gateway/netem.py).
     app.add_api_route("/netem", netem.get_state, methods=["GET"])
     app.add_api_route("/netem", netem.set_profile, methods=["POST"])
+    # Browser-controlled runs (replay/sim launcher): OFF unless RUNS_CTL=1 (gateway/runs.py).
+    app.add_api_route("/runs", runs.get_state, methods=["GET"])
+    app.add_api_route("/runs", runs.start_run, methods=["POST"])
+    app.add_api_route("/runs", runs.stop_run, methods=["DELETE"])
 
     # Frontend last: catch-all static serve of the Vite build (index.html at /).
     if DIST.is_dir():
