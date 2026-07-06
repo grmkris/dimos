@@ -4,14 +4,40 @@
 // auto-runs), waits for "done ✓", prints the results table. Valid for WS / WebTransport / WebRTC.
 //
 // Usage:  deno run -A scripts/bench-headless.ts "<bench-url-with-run=1>"
-// Chromium: set CHROME_BIN, else falls back to the Playwright-managed Chrome-for-Testing on this Mac.
+// Chromium: set CHROME_BIN, else the newest Playwright-managed Chrome-for-Testing in the local cache.
 import { chromium } from "npm:playwright-core@1.49.1";
 
 const URL = Deno.args[0];
 if (!URL) { console.error("usage: bench-headless.ts <url>"); Deno.exit(1); }
-const EXE = Deno.env.get("CHROME_BIN") ??
-  "/Users/kristjangrm/Library/Caches/ms-playwright/chromium-1208/chrome-mac-arm64/" +
-    "Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing";
+
+function findPlaywrightChrome(): string | null {
+  const home = Deno.env.get("HOME") ?? "";
+  const root = Deno.build.os === "darwin"
+    ? `${home}/Library/Caches/ms-playwright`
+    : `${home}/.cache/ms-playwright`;
+  const leaves = Deno.build.os === "darwin"
+    ? ["chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+      "chrome-mac/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"]
+    : ["chrome-linux/chrome"];
+  try {
+    const versions = [...Deno.readDirSync(root)]
+      .filter((e) => e.isDirectory && e.name.startsWith("chromium-"))
+      .map((e) => e.name).sort().reverse(); // newest build first
+    for (const v of versions) {
+      for (const leaf of leaves) {
+        const p = `${root}/${v}/${leaf}`;
+        try { Deno.statSync(p); return p; } catch { /* try next candidate */ }
+      }
+    }
+  } catch { /* no playwright cache */ }
+  return null;
+}
+
+const EXE = Deno.env.get("CHROME_BIN") ?? findPlaywrightChrome();
+if (!EXE) {
+  console.error("no Chromium found — set CHROME_BIN or `npx playwright install chromium`");
+  Deno.exit(1);
+}
 
 const browser = await chromium.launch({
   executablePath: EXE,
