@@ -1,125 +1,77 @@
-# Scenario blueprints — 3 real-world data profiles, end-to-end
+# Scenario Publishers
 
-Three self-contained dimos publisher blueprints — navigation, manipulation, perception — each with a
-different topic namespace and data profile, exercising the whole dimoscope path (discover → visualize →
-type → benchmark) across distinct workloads. The gateway taps the bus, so the browser's live topic set
-follows whatever is publishing (run one, stop, run another).
+The scenario publishers provide three real-world topic profiles for dimoscope: navigation,
+manipulation, and perception. They are regular DimOS modules, so the gateway discovers them without
+scenario-specific app code.
 
-| scenario | namespace | topics (type · rate · size) | data-path axis | primary viewer |
-|---|---|---|---|---|
-| **scope-nav** — mobile navigation | `/nav/*` | `pose` PoseStamped·100 Hz·tiny · `path` Path·5 Hz · `cloud` PointCloud2·10 Hz·~200 KB · `map` OccupancyGrid·1 Hz·~40 KB | **size-mix** (the QoS-priority story) | WorldView 2D (arrow+trail, path, points, grid) |
-| **scope-arm** — manipulation | `/arm/*` | `joint_states` JointState·250 Hz · `ee_pose` PoseStamped·100 Hz · `imu` Imu·500 Hz·tiny · `trajectory` JointTrajectory·2 Hz | **message-rate ceiling** (~850 msg/s) | Topics-tab stream cards (hz/latency) + ee_pose arrow |
-| **scope-cam** — perception | `/cam/*` | `rgb` Image·30 Hz·~550 KB · `depth` Image·15 Hz · `points` PointCloud2·10 Hz·~1 MB · `detections` Detection2DArray·30 Hz | **bandwidth / bufferbloat** (the WebTransport story) | CameraView (rgb) + WorldView points |
+| Scenario | Namespace | Main topics | Stress axis | Primary viewer |
+| --- | --- | --- | --- | --- |
+| `nav` | `/nav/*` | pose, path, cloud, map | mixed size/QoS | WorldView |
+| `arm` | `/arm/*` | joint states, ee pose, imu, trajectory | high message rate | stream cards |
+| `cam` | `/cam/*` | rgb, depth, points, detections | bandwidth/bufferbloat | Camera + WorldView |
 
-Each reuses standard `dimos.msgs` types, so the app auto-renders them by type (no app code per scenario)
-and the `packages/web/scripts/gen_types.py` codegen types every topic with 0 untyped.
+## Run
 
-## Run it
-
-Prereqs — a gateway + the app (two terminals, from `dimos/web/dimoscope`):
+Start the gateway and app from `dimos/web/dimoscope`:
 
 ```bash
-deno task serve      # the single Python service: bus tap + /ws + /media + /sse + /poll + /rtc + WebTransport
-deno task app        # the Vite app → http://localhost:5173
+deno task serve
+deno task app
 ```
 
-Then run **one** scenario (a third terminal); Ctrl-C to stop, then run another:
+Run one publisher in another terminal:
 
 ```bash
-./scenarios/run.sh nav      # → /nav/*   (mobile navigation)
-./scenarios/run.sh arm      # → /arm/*   (manipulation)
-./scenarios/run.sh cam      # → /cam/*   (perception)
+./scenarios/run.sh nav
+./scenarios/run.sh arm
+./scenarios/run.sh cam
 ```
 
-Open `http://localhost:5173`. The sidebar discovers the live topics; **WorldView** (2D) draws the spatial
-ones, **CameraView** shows `/cam/rgb`, and clicking any topic shows it as JSON in the **Inspector**. The
-**Topics** tab's stream cards plot per-topic hz/latency for anything (best for the high-rate `/arm/*` streams).
+Open http://localhost:5173. The sidebar discovers live topics; WorldView renders spatial topics,
+CameraView shows `/cam/rgb`, and the Topics tab shows rate/latency stream cards.
 
-Transport is `DIMOS_TRANSPORT=zenoh` by default (matches `deno task serve`/`sim`); `DIMOS_TRANSPORT=lcm`
-also works — the gateway taps both.
+`DIMOS_TRANSPORT=zenoh` is the default and matches the dimoscope tasks. `DIMOS_TRANSPORT=lcm` also
+works because the gateway taps both buses.
 
-### Switching scenarios
+## Switching Scenarios
 
-Stop a scenario and start another and the data switches live (stream cards, Inspector and CameraView
-follow immediately). The gateway's discovery registry (`gateway/bus.py` `Bus.topics`) never evicts, so
-topic names accumulate for the life of the process and WorldView's "first topic of a type" pick can
-latch onto a stale name — restart `deno task serve` for a pristine topic list. The data switch needs no restart.
+Stop one scenario and start another to change the live data. The gateway discovery registry does not
+evict old topic names during a process lifetime, so restart `deno task serve` when you want a pristine
+topic list or deterministic first-topic selection.
 
-## Types — generated from the blueprint (static, no gateway)
+## Types
 
-Each scenario's typed maps are generated **directly from its Python source** — topics from the
-module-level `PORTS` list, RPC commands from its `@rpc` method signatures — with nothing running:
+`deno task gen-types` reads these sources plus `go2_load.py` and writes
+`app/src/dimos.topics.gen.ts`. Details are in [`../packages/web/README.md`](../packages/web/README.md).
 
-```bash
-deno task gen-types    # regenerates app/src/dimos.topics.gen.ts from all sources (nav/arm/cam/bench + go2_load)
+## Benchmarking
+
+Run a scenario, then use the app's Topics tab -> Benchmark drawer. The three scenarios exercise
+different axes:
+
+- `nav`: about 1-2 MB/s with mixed small and bulk topics.
+- `arm`: many small messages per second.
+- `cam`: heavy image/depth/point-cloud traffic.
+
+For the standard synthetic benchmark source, use `deno task scope:bench` or `deno task load`.
+
+## Remote
+
+Run the gateway and a scenario on the remote machine, then open:
+
+```text
+http://localhost:5173/?gw=<host>:8080
 ```
 
-→ a `DimosTopics` map (0 untyped) + a strongly-typed `DimosCommands`:
-
-```ts
-"/nav/pose": geometry_msgs.PoseStamped;   // topic → message type
-"ScopeNav": { "navigate_to": { args: [geometry_msgs.PoseStamped]; ret: boolean } };  // @rpc → typed call
-```
-
-Consume via `createDimosClient<DimosTopics, DimosCommands>()`. Details + the full type map:
-[`packages/web/README.md`](../packages/web/README.md).
-
-## Benchmark them
-
-Run a scenario, then open the app's **Topics tab → Benchmark drawer** to measure its live topics across
-transports — the three profiles are clearly distinct: `nav` = size-mix (~1.9 MB/s), `arm` = message-rate
-ceiling (~850 msg/s, tiny bytes), `cam` = bandwidth (~26 MB/s), each stressing a different axis of the
-data path. For the standard `/load/*` synthetic load, use `deno task scope:bench` (see `bench.py`).
-
-## Remote / VPS
-
-The scenarios are just bus publishers, so streaming from a VPS needs no code change: run the gateway + one
-scenario **on the VPS**, then open the app pointed at it —
-
-```
-http://localhost:5173/?gw=<vps-host>:8080
-```
-
-All five transports honor `?gw`; the page auto-uses `wss` when served over HTTPS. WebTransport
-additionally needs the QUIC port (`WT_PORT`, default 8443) reachable + the `/cert` hash endpoint.
-
-## Recommended QoS lanes
-
-Suggested `qos.rules.json` entries for the scenario topics — an **array** of `{topic, lane}` rules
-(first match wins; globs + `#type` matching supported; see `qos.rules.example.json`). The command lane
-is for teleop/cmd_vel; the default lane catches the rest (e.g. `/nav/path`, detections):
-
-```json
-[
-  { "topic": "/nav/pose", "lane": "sensor" },
-  { "topic": "/arm/ee_pose", "lane": "sensor" },
-  { "topic": "/arm/imu", "lane": "sensor" },
-  { "topic": "/arm/joint_states", "lane": "sensor" },
-  { "topic": "/nav/map", "lane": "bulk" },
-  { "topic": "/nav/cloud", "lane": "bulk" },
-  { "topic": "/cam/rgb", "lane": "bulk" },
-  { "topic": "/cam/depth", "lane": "bulk" },
-  { "topic": "/cam/points", "lane": "bulk" }
-]
-```
+Expose TCP `8080` and, for UDP transports, `8443/udp` and `8444/udp`.
 
 ## Files
 
+```text
+common.py       shared helpers
+nav.py          navigation publisher
+arm.py          manipulation publisher
+cam.py          perception publisher
+bench.py        standalone /load/* publisher
+run.sh          scenario launcher
 ```
-scenarios/common.py       shared scaffolding (transport helpers, seq/ts stamping, make_image, runner)
-scenarios/nav.py|arm.py|cam.py   the 3 blueprints (Module + Out[T] streams + __main__ launcher)
-scenarios/run.sh          launch one:  ./scenarios/run.sh <nav|arm|cam>
-scenarios/bench.py        the standalone /load/* synthetic source for the in-browser bench (deno task scope:bench)
-```
-
-## Notes on message choices
-
-- **`/arm/imu` (not a force/torque wrench):** `geometry_msgs.WrenchStamped` is a plain dataclass with no
-  LCM wire codec, so it can't cross the bus. A wrist `sensor_msgs.Imu` is the canonical high-rate arm
-  telemetry and encodes cleanly — same "tiny, extreme-rate" role.
-- **PointCloud2** wraps Open3D, so `nav`/`cam` have a slightly slower cold start (allow a brief warm-up
-  before measuring). Built once via `from_numpy`, then restamped per publish.
-- **`/cam/detections`** carries only a stamped header (empty detection list) by design — it's the small
-  "must survive the bulk" topic in the bandwidth scenario; the payload isn't the point.
-- **`/arm/trajectory`** (`JointTrajectory`) has no `ts`/`frame_id` (it uses `.timestamp`), so the bench
-  reports n/a latency/loss for it — it still streams and inspects.

@@ -1,164 +1,124 @@
-# dimoscope — DimOS topics in the browser (Dimos JS)
+# dimoscope - DimOS topics in the browser
 
-`@dimos/web` (Dimos JS) is a transport-agnostic browser SDK to subscribe to DimOS topics, visualize
-them, and teleoperate — plus a single backend service and a transport benchmark. The browser decodes
-messages itself with [@dimos/msgs](https://jsr.io/@dimos/msgs) (the 8-byte type hash is
-self-describing), so the service is a thin byte-relay and the same SDK works over any transport.
+`dimoscope` is a browser SDK, gateway, and reference app for DimOS topics. It subscribes to
+LCM/Zenoh topics, decodes DimOS messages in the browser with `@dimos/msgs`, visualizes robot state,
+and routes teleop/RPC through a server-side safety boundary.
 
-```
-robot / sim ─► DimOS bus (LCM | Zenoh)
-   │
-   └─► the backend (`deno task serve`) — the Python gateway (http://0.0.0.0:8080) + the native Rust
-         sidecar (WebTransport UDP :8443 + WebRTC UDP :8444, fed over a unix socket). The gateway
-         taps BOTH LCM + Zenoh → one normalized stream, fanned out over every transport:
-           GET /            the built web app  (the SDK consumer itself)
-           WS  /ws          data plane: topics + teleop/goal/rpc  (the trust boundary)
-           GET /sse · /poll Server-Sent Events · HTTP long-poll
-           WS  /rtc         WebRTC signaling (the sidecar owns the DataChannel sessions)
-           WS  /media       camera: webcodecs / webrtc / jpeg
-           GET /cert        the sidecar's self-signed cert hash
-           /runs            start/stop a blueprint or recorded replay (RUNS_CTL=1 → topbar control)
-         Derived bus topics: raw camera Image → <topic>_jpeg (TurboJPEG; IMAGE_JPEG=0 to disable,
-         IMAGE_JPEG_QUALITY=75) and PointCloud2 → <topic>_ds/_draco — the browser rides these
-         instead of multi-MB raw frames (docs/video-latency-2026-07-06.md).
-   ▼
-@dimos/web  (decode via @dimos/msgs · on-demand · QoS · client.call RPC · useVideo media)
-   ▼
-@dimos/react ─► app (WorldView · Camera · Pose · Stats · Commands · Topics) + teleop
-```
+The useful split is:
+
+- `@dimos/web`: transport-agnostic TypeScript client.
+- `@dimos/react`: React hooks around the client.
+- Python gateway: FastAPI service, bus tap, topic discovery, QoS, media/cloud transcodes, teleop/RPC.
+- Rust sidecar: WebTransport and WebRTC data egress over UDP.
+- React app: reference cockpit with WorldView, camera, clouds, topic streams, teleop, and benchmarks.
 
 ## Quickstart
 
-Prereqs: [uv](https://docs.astral.sh/uv/) + [Deno](https://deno.com/) 2.x (no Node — Deno runs Vite) +
-[Rust](https://rustup.rs/) (cargo builds the WebTransport sidecar); Chrome/Edge for WebTransport
-(everything else falls back to WebSocket).
+Prereqs: `uv`, Deno 2.x, Rust, and Chrome/Edge for WebTransport. Other browsers use WebSocket.
 
-From the **repo root**, with only the `web` extra — every line is copy-paste:
+From the repo root:
 
 ```bash
-uv sync --extra web                    # backend deps (FastAPI + zenoh), once
+uv sync --extra web
 cd dimos/web/dimoscope
-deno install && deno task build        # frontend deps + the app bundle the gateway serves, once
+deno install && deno task build
 
-deno task serve                        # tab 1 — gateway + WT sidecar → http://localhost:8080/
-                                       #         (first run compiles the sidecar, ~2 min)
-deno task load                         # tab 2 — /load/* data source (multi-rate lanes + crankable flood)
+deno task serve   # gateway + WT/WebRTC sidecar -> http://localhost:8080/
+deno task load    # synthetic /load/* data source
 ```
 
-Open **http://localhost:8080/** — topics appear in the sidebar; the **Topics** tab shows per-topic
-stream cards (live hz / kB/s / latency) with per-topic QoS controls. `deno task app` runs a Vite dev
-server on :5173 (hot reload) instead of the built bundle; the gateway also runs cwd-free as
-`uv run python -m dimos.web.dimoscope.gateway`.
+Open http://localhost:8080/. Topics appear in the sidebar and the Topics tab shows per-topic rate,
+bandwidth, latency, and QoS controls.
 
-Want a robot instead of synthetic lanes? Install the sim stack once and swap tab 2 for the dog:
+For a simulated Go2 with teleop, camera, lidar, and the same load lanes:
 
 ```bash
-uv sync --extra web --extra unitree --extra sim --extra mapping   # once — dimsim + go2 (repo root)
-deno task dog     # teleoperable go2 (dimsim) + camera + the same /load/* lanes
+uv sync --extra web --extra unitree --extra sim --extra mapping
+cd dimos/web/dimoscope
+deno task dog
 ```
 
-WASD drives it; close the tab → deadman stop. Plain go2 variants: `deno task sim` (mujoco) ·
-`sim:dimsim` · `sim:replay`; real-world data profiles: `deno task scope:{nav,arm,cam,bench}`
-([scenarios](scenarios/README.md)).
+WASD drives through the gateway deadman; closing the tab stops the robot.
 
-## The SDK in 15 lines — list topics, subscribe, control the push rate
+## SDK in 15 lines
 
 ```ts
 import { createDimosClient } from "@dimos/web";
 
-const client = createDimosClient();          // default transport: WebSocket
-await client.connect("ws://localhost:8080"); // "/ws" appended automatically
+const client = createDimosClient();
+await client.connect("ws://localhost:8080");
 
-console.table(client.listTopics());          // [{topic, type}, …] — live discovery, zero config
+console.table(client.listTopics());
+
 const sub = client.subscribe("/load/cloud", (m) => {
-  console.log(m.data, m.meta.latencyMs);     // m.data = the decoded dimos-lcm message (@dimos/msgs)
+  console.log(m.data, m.meta.latencyMs);
 });
 
-// Server-side push control, per client per topic. The gateway downsamples/sheds before sending
-// (bytes leave the wire); other subscribers of the same topic are unaffected:
-client.setQos("/load/cloud", { maxHz: 2, priority: "low", reliability: "best-effort" });
+client.setQos("/load/cloud", {
+  maxHz: 2,
+  priority: "low",
+  reliability: "best-effort",
+});
 
-const one = await client.peek("/load/grid", { timeoutMs: 2000 }); // pull-based one-shot
-sub.unsubscribe();                           // on-demand: bytes stop on the wire
+const one = await client.peek("/load/grid", { timeoutMs: 2000 });
+sub.unsubscribe();
 ```
 
-Also on the client: `client.teleop(lin, ang)` (the service clamps velocity + runs a TTL deadman),
-`client.subscribeAll(cb)` (firehose), `client.topic(name)` (rich handle — `getLatest()`,
-`setQos({ maxHz: 15 })`, `stats()` → `{ hz, bytesPerSec, lastLatencyMs, count }`), and
-`await client.modules.GO2Load.start_bench(hz, bytes, kind)` — RPC via a typed Proxy.
+Also available: `client.teleop(lin, ang)`, `client.subscribeAll(cb)`, `client.topic(name)`,
+`client.modules.<Module>.<rpc>()`, and typed clients generated from blueprint sources. See
+[`packages/web/README.md`](packages/web/README.md) for typed topic/RPC codegen and
+[`docs/webapp-guide.md`](docs/webapp-guide.md) for the React guide.
 
-Server-side you write nothing. The gateway self-discovers topics from both LCM and Zenoh, assigns
-QoS lanes by a type/name heuristic (override per deployment via `qos.rules.json` — see
-`qos.rules.example.json`), and runs a per-client priority outbox. RPC is a server-side whitelist —
-the `RPC_COMMANDS` list in `gateway/egress.py` (GO2Connection `standup`/`liedown` + GO2Load
-`start_all`/`stop_all`/`start_bench`/`stop_bench`); edit it to expose your own `@rpc`.
+## Gateway and Transports
 
-Typed topics + commands are generated from the blueprint: `deno task gen-types` writes
-`app/src/dimos.topics.gen.ts` (scenarios + `go2_load.py`), and
-`createDimosClient<DimosTopics, DimosCommands>()` autocompletes topic names, message fields, and RPC
-signatures — see [`packages/web/README.md`](packages/web/README.md).
+The gateway taps both LCM and Zenoh, normalizes messages, and fans them out over one service:
 
-Building your own webapp? Start with **[docs/webapp-guide.md](docs/webapp-guide.md)** — a 5-minute
-React app, a guided tour of this app as the reference implementation, and the `@dimos/react` hook
-catalog. The live copy-me panel is the **Example** tab (`?tab=example` —
-[app/src/Example.tsx](app/src/Example.tsx)).
+| Wire | Path | Purpose |
+| --- | --- | --- |
+| WebSocket | `/ws` | Universal duplex fallback; topics, teleop, goal, RPC |
+| WebTransport | UDP `:8443` | Preferred data path; QUIC streams + datagrams, no TCP head-of-line |
+| WebRTC data | `/rtc` + UDP `:8444` | Data-channel comparison path and UDP fallback |
+| SSE | `/sse` | Server-to-client baseline |
+| HTTP poll | `/poll` | Request/response baseline |
+| Media | `/media` | Camera via WebCodecs, WebRTC media, or JPEG topic fallback |
 
-## Transports — pick a delivery mechanism from the topbar dropdown
+Derived topics keep heavy browser paths practical:
 
-Same app, same `@dimos/web` SDK, five swappable delivery mechanisms — all on the one service,
-same-origin. The dropdown rebuilds the client; `?gw=host:port` overrides the origin (e.g. a remote VPS
-for real-WAN testing) and `?transport=<id>` persists the dropdown across reloads (`auto | ws | sse |
-poll | webrtc | webtransport`). They carry identical self-describing frames, so the codec is unchanged;
-only the wire differs:
+- `sensor_msgs.Image` -> `<topic>_jpeg` through TurboJPEG.
+- `sensor_msgs.PointCloud2` -> `<topic>_ds` and `<topic>_draco`.
 
-| Mechanism        | Wire              | Path        | Notes                                                                                                        |
-| ---------------- | ----------------- | ----------- | ------------------------------------------------------------------------------------------------------------ |
-| **WebSocket**    | TCP               | `/ws`       | duplex, reliable; carries teleop/goal/rpc; the universal fallback for Auto                                   |
-| **SSE**          | TCP/HTTP          | `/sse`      | server→client only (binary→base64)                                                                           |
-| **HTTP poll**    | TCP/HTTP          | `/poll`     | universal req/resp baseline                                                                                  |
-| **WebRTC data**  | SCTP/DTLS/**UDP** | `/rtc` + UDP `:8444` | served by the sidecar (all sessions mux on one UDP port); duplex — teleop/goal/rpc over the ctl channel; one shared SCTP cwnd → no lane isolation ([benchmarks §3](docs/benchmarks.md)) |
-| **WebTransport** | HTTP/3 **QUIC**   | UDP `:8443` | streams + datagrams, no HoL; also carries teleop/rpc; the Auto default; cert hash from `/cert` (Chrome/Edge); served by the native Rust sidecar (`gateway/wt-sidecar` — bulk numbers in [benchmarks §3](docs/benchmarks.md)) |
+All teleop, goal, and RPC traffic goes through `SafetyEgress`: velocity clamps, TTL deadman,
+stop-on-disconnect, and an RPC whitelist.
 
-## Benchmark
+## Benchmarks
 
-The benchmark runs **in the real browser** across all 5 delivery mechanisms (WS · SSE · poll ·
-WebRTC-data · WebTransport), so WebRTC/WebTransport are measured on the actual browser stacks. One
-sweep is a matrix — netem profiles × workloads × maxHz × repeats — with per-cell condition stamps,
-per-lane breakdowns, 1 s time-series, offered-vs-delivered goodput, a localStorage run history with
-a pinned Δ baseline, and Markdown/JSON exports that embed a paste-to-reproduce URL (`?run=1`). See
-**[docs/benchmarks.md](docs/benchmarks.md)** for the methodology, QoS, real-WAN runbook, and full tables.
+The benchmark runs in the real browser across the transports above. It sweeps network profiles,
+workloads, rates, and repeats, then exports Markdown/JSON with reproduce URLs. The current measured
+verdict is:
 
-```bash
-deno task serve   # the backend on :8080 (+ WT QUIC :8443)
-deno task load    # the /load/* lanes + the GO2Load start_bench/stop_bench flood knob
-# open http://localhost:8080/ → Topics tab → Benchmark drawer
-```
+| Scenario | WebTransport | WebSocket | WebRTC data |
+| --- | ---: | ---: | ---: |
+| Clean bulk | 19 MB/s | 11-14 MB/s | 2-3 MB/s |
+| Bulk at 5% loss | 9-11 MB/s | collapses without BBR | near zero |
+| Fast lane beside flood | p95 0.28-0.48 s on shaped links | can collapse behind TCP bulk | parity on shaped links, poor under loss |
+
+Use WebTransport for robot data where UDP is available, WebRTC for camera media, and WebSocket as
+the reachability fallback. Full methodology, QoS model, current transport/video/cloud numbers, VPS
+runbook, and env reference live in [`docs/benchmarks.md`](docs/benchmarks.md).
 
 ## Development
 
 ```bash
-deno task check                                     # typecheck: SDK + react + app
-deno task test                                      # SDK unit tests
-uv run pytest dimos/web/dimoscope/gateway/tests -q  # gateway unit tests — run from the REPO ROOT
+deno task check
+deno task test
+uv run pytest dimos/web/dimoscope/gateway/tests -q
 deno task fmt && deno task lint
 ```
 
-What's rough or deliberately deferred (and why): [docs/status.md](docs/status.md).
+Useful docs:
 
-`deno task serve` builds the **native WT sidecar** (Rust) with cargo, then launches it beside the
-gateway — the sidecar owns UDP `:8443`, fed over a unix socket (`gateway/pipe.py`). To iterate on the
-sidecar alone, run `uv run python -m gateway` + `deno task wt-sidecar` in separate shells: kill/rebuild
-the sidecar and the pipe reconnects while the gateway keeps serving (numbers in
-[benchmarks §3](docs/benchmarks.md)).
-
-Without deno — prod/VPS shape, exactly what `deno task serve` automates:
-
-```bash
-cargo build --release --manifest-path gateway/wt-sidecar/Cargo.toml   # once (~2 min)
-DIMOS_TRANSPORT=zenoh uv run python -m gateway &                      # :8080 — RPC backend must match the blueprints'
-gateway/wt-sidecar/target/release/wt-sidecar &                        # QUIC/UDP :8443 — WebTransport
-```
-
-The two processes start in any order and find each other over the pipe; `/cert` serves 503 until the
-sidecar is up (Auto lands on WebSocket meanwhile). Full VPS runbook — firewall, the dog, netem:
-[benchmarks §3](docs/benchmarks.md).
+- [`docs/benchmarks.md`](docs/benchmarks.md): measurements, QoS, netem, runbook.
+- [`docs/webapp-guide.md`](docs/webapp-guide.md): build your own React app on the SDK.
+- [`docs/status.md`](docs/status.md): current caveats and deferred work.
+- [`scenarios/README.md`](scenarios/README.md): navigation, arm, camera publisher scenarios.
+- [`gateway/wt-sidecar/README.md`](gateway/wt-sidecar/README.md): Rust sidecar notes.

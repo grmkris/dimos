@@ -1,67 +1,39 @@
-# Status & known gaps
+# Status and Known Gaps
 
-What works is measured in [benchmarks.md](benchmarks.md); this page is the honest remainder — what's
-rough, what's out of scope, and the todo for each.
+This page lists the current caveats for dimoscope. Measured behavior and runbooks live in
+[`benchmarks.md`](benchmarks.md); app-building guidance lives in [`webapp-guide.md`](webapp-guide.md).
 
-## Works, measured
+## Works
 
-- Five delivery mechanisms on one gateway (WS · SSE · poll · WebRTC · WebTransport), identical
-  self-describing frames, browser-real benchmark matrix with netem — [benchmarks.md](benchmarks.md)
-  §3 + the `bench-results-*.md` files.
-- QoS: four priority lanes (command > sensor > default > bulk), conflate-to-freshest, per-client
-  per-topic overrides (`setQos`), operator glob rules; the fast lane holds beside a flood on WT
-  (§0 of benchmarks.md is the 5-minute demo).
-- Durability: a late subscriber gets the last value on any wire — the gateway keeps a last-value
-  cache and replays it on subscribe over WS and down the sidecar pipe for WT/WebRTC.
-- Point-cloud plane: gateway-transcoded `_ds` + `_draco` variants (~7× at full point density),
-  Clouds comparison tab, 3D WorldView.
-- Teleop trust boundary: velocity clamp, TTL deadman, stop-on-disconnect, server-side RPC whitelist.
-- Build-your-own-webapp path: [packages/web/README.md](../packages/web/README.md), typed topics +
-  commands via `deno task gen-types`, `Example.tsx` reference panel.
-- Video latency: the Camera panel shows a live glass-to-glass readout; WebRTC plays out with a
-  zeroed jitter buffer; every transcode plane (media/image/cloud) ingests freshest-wins
-  (`ConflatedIngest`) — a slow encoder lowers fps, never adds lag
-  ([video-latency-2026-07-06.md](video-latency-2026-07-06.md)).
-- Runs control: `/runs` (`RUNS_CTL=1`) starts/stops an allowlisted blueprint or recorded replay
-  from the app's topbar — the same `dimos run` an operator types; shell-started and UI-started
-  runs share the run registry, so both show up and either side can stop them.
+- One gateway fans LCM/Zenoh topics to WebSocket, WebTransport, WebRTC data, SSE, and poll.
+- Browser SDK and React hooks support discovery, subscriptions, QoS, latest values, stats, teleop,
+  whitelisted RPC, camera, and typed topic/RPC codegen.
+- QoS uses command/sensor/default/bulk lanes, per-client overrides, operator rules, conflation, and
+  last-value replay.
+- Heavy media paths have browser-friendly siblings: image topics get `_jpeg`; point clouds get `_ds`
+  and `_draco`.
+- The app includes WorldView, camera, clouds comparison, stream cards, teleop, benchmark drawer, and
+  optional `/runs` controls.
 
-## Known issues
-- **Safari / Firefox**: no (stable) WebTransport → Auto falls back to WS. Works, but without lane
-  isolation; the fallback is the documented behavior, not a bug.
-- **Sidecar is a build step**: WebTransport/WebRTC need the Rust sidecar (`cargo build`, ~2 min once).
-  WS-only works with zero Rust — the gateway serves everything and `/cert` returns 503 until a
-  sidecar appears. Prebuilt binaries are a packaging todo.
+## Known Gaps
 
-## Out of scope here — and the todo
+- Safari and Firefox do not provide stable WebTransport. Auto falls back to WebSocket, which is
+  correct but loses QUIC lane isolation.
+- WebTransport and WebRTC data need the Rust sidecar. WS/SSE/poll continue to work without it; `/cert`
+  returns 503 until the sidecar writes its cert hash.
+- Auth and TLS are out of scope for this prototype. Treat it as LAN/VPN/VPS-behind-firewall software.
+- `@dimos/web` and `@dimos/react` are not published packages yet. Use the workspace packages or vendor
+  them as described in `webapp-guide.md`.
+- The SDK intentionally does not fully match the upstream web API proposal yet. Remaining convergence:
+  `Dimos.connect(...)`, injectable decode, QoS naming, `m.stream`, and topic allow/deny lists.
+- CI for this tree is still manual. The intended job is `deno task check`, `deno task test`, and
+  `uv run pytest dimos/web/dimoscope/gateway/tests -q`.
+- Multi-robot namespacing is not designed here. The gateway currently assumes one logical DimOS topic
+  namespace.
 
-- **#2502 API convergence + JSR publish** — this SDK implements ~80% of the upstream TS-API spec.
-  The delta: a `Dimos.connect({decode, dimosWs})` wrapper, injectable `decode` (removes the hard
-  `@dimos/msgs` dep → clean JSR publish + a gateway-served `/dimos.js`), QoS renames
-  (`maxHz`→`rate`, `best_effort`, add `durability`), `m.stream` on the firehose, topic
-  whitelist/blacklist.
-- **Gateway as a dimos Module** (`DimosWebsocket.blueprint()`, subscribe-all like the rerun bridge) —
-  #2710 is deciding bridge-as-Module vs separate process; this gateway uses a raw bus tap to stay
-  dependency-free. The port is mechanical: `pubsub.subscribe_all` delivers raw bytes (no re-encode
-  penalty), and `module_info` introspection can replace the hardcoded RPC whitelist.
-- **`@web_module` / `@web_init`** — spec-only in #2502; the natural implementation is the
-  `@rpc`/`@skill` marker-attribute pattern.
-- **Auth + TLS** — dimos has no inbound-auth precedent; this stack targets LAN/VPS behind your own
-  firewall. Internet exposure needs its own design pass.
-- **Cloudflare-SFU bench column** — specced end-to-end (operator protocol; constraints: 16 KiB
-  message cap, ~1k msg/s per channel, one reliable ordered robot→browser channel); running it needs
-  live broker credentials. Published measurements put the SFU DataChannel data plane at ~1–4 MB/s.
-- **CI** — none for this tree; verification is the manual commands in the README. The todo is one
-  deno job: typecheck + tests + app build.
-- **Multi-robot namespacing** — the gateway canonicalizes the single `dimos/` prefix; N robots need a
-  namespace scheme, which is an upstream bus decision, not a gateway change.
+## Related Work
 
-## Relation to the hosted-teleop track (#2048 / #2562)
-
-Complementary planes, not competitors: the CF/LiveKit SFU path is internet operator teleop —
-commands + video through any NAT with managed auth; dimoscope is the full-bus developer cockpit —
-every topic, QoS, benchmarks, on LAN or a reachable host. The numbers agree across both efforts:
-SCTP DataChannels carry ~1–4 MB/s of data; WebTransport carries 16–19 MB/s with lane isolation and,
-with the bulk credit gate, matches WebRTC's small-lane freshness on rate-capped links
-([bench-results-2026-07-06-gate.md](bench-results-2026-07-06-gate.md)). Video rides WebRTC media
-in both.
+Hosted teleop/SFU work and dimoscope are complementary: SFU paths are for internet operator video and
+NAT traversal; dimoscope is a full-bus developer cockpit with topic discovery, QoS, benchmarks, and
+local or reachable-host operation. Video should ride WebRTC media; general robot data should prefer
+WebTransport where UDP is available and WebSocket as fallback.
