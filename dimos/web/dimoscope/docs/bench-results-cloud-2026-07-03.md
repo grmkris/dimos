@@ -1,6 +1,6 @@
 # Point-cloud streaming to the browser — thin/code the geometry (2026-07-03)
 
-Follows the research note (`docs/point-cloud-streaming-research.md`). A raw `PointCloud2` is heavy
+Follows the research note (`point-cloud-streaming-research.md`). A raw `PointCloud2` is heavy
 (20k pts × 16 B = **320 KB/frame ≈ 3.2 MB/s @ 10 Hz**), rides the bulk lane, and dies under loss on
 WS/WebRTC (the 2026-07-03 transport matrix). This ships a server-side **cloud plane** that hands the
 browser a browser-appropriate representation instead of the raw firehose, and measures it end-to-end.

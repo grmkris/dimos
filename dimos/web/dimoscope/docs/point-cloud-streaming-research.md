@@ -10,7 +10,7 @@ keep coming up:
 2. **Cloud-as-geometry** — a point-native codec (G-PCC / Draco) or a downsampled representation
    (splats / voxels / LOD) over a **data lane**, ideally a QUIC lane.
 
-Our own transport benchmark (`docs/benchmarks.md`, `bench-results-2026-07-03.md`) points at option 2
+Our own transport benchmark (`benchmarks.md`, `bench-results-2026-07-03.md`) points at option 2
 over a QUIC lane: WebTransport wins bulk + is the only transport that survives loss + gives real
 per-lane isolation, whereas WebRTC DataChannels share **one SCTP congestion window** and collapse
 under loss/contention. The MoQ paper below reaches the same conclusion from the streaming side.
@@ -73,6 +73,6 @@ end-to-end (localhost, WS + WT, live 10 Hz cloud):
   software-encode latency. Both take the cloud from "won't fit a cellular uplink" to ~0.3–0.5 MB/s.
 
 Full numbers, method, and gaps (WebRTC-local ICE, netem-loss matrix pending a Linux VPS):
-`../bench-results-cloud-2026-07-03.md`.
+`bench-results-cloud-2026-07-03.md`.
 
-Related repo docs: `docs/benchmarks.md`, `bench-results-2026-07-03.md`.
+Related repo docs: `benchmarks.md`, `bench-results-2026-07-03.md`.

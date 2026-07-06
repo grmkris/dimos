@@ -91,7 +91,7 @@ Takeaways:
 - Past that they diverge: WT-rs moves 155 of 180 MB/s offered; WS tops out around 40–45 MB/s of
   incompressible bulk and the outbox conflates the rest to the freshest frame (shedding by design —
   the tab stays interactive through the 300 MB/s firehose). permessage-deflate burns CPU on the random
-  payloads; disabling it on `/ws` is an open follow-up.
+  payloads; `/ws` now ships with it off by default (`WS_DEFLATE=1` restores it — see the env table).
 - Loopback has no loss, so TCP never stalls here. The no-HoL-under-loss case is §3 — or inject loss
   locally (Linux `tc qdisc add dev lo root netem loss 5%`; macOS `dnctl`/dummynet).
 
