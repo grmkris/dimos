@@ -157,7 +157,9 @@ impl Hub {
     pub fn route_media(&self, topic: &str, frame: &Bytes) {
         let sessions = self.sessions.lock().expect("hub lock");
         for sess in sessions.values() {
-            sess.offer_media(topic, frame);
+            if sess.offer_media(topic, frame) {
+                self.send_upstream(json!({"op": "media-pressure", "topic": topic}));
+            }
         }
     }
 
@@ -214,7 +216,7 @@ pub struct Session {
     /// Big frames for the persistent uni stream — its writer awaits, so QUIC flow control pushes
     /// backpressure into this outbox where conflation keeps the backlog fresh.
     pub bulk: PriorityOutbox,
-    /// Encoded camera chunks for WT WebCodecs; conflated per topic on a dedicated stream.
+    /// Encoded camera chunks for WT WebCodecs; bounded per topic, pressure-reported on shed.
     pub media: PriorityOutbox,
     /// Control JSON to the browser (hello/topic/pong/rpc-res), written by the control-stream task.
     pub ctl: mpsc::UnboundedSender<Value>,
@@ -262,10 +264,10 @@ impl Session {
         outbox.put_data(topic, lane, framed.clone());
     }
 
-    fn offer_media(&self, topic: &str, frame: &Bytes) {
+    fn offer_media(&self, topic: &str, frame: &Bytes) -> bool {
         let st = self.state.lock().expect("session lock");
         if !st.media_subs.contains(topic) {
-            return;
+            return false;
         }
         drop(st);
         // H.264 deltas are NOT independent — conflating (keep-latest-1) silently drops a delta the
@@ -274,7 +276,7 @@ impl Session {
         // bounded depth only sheds under a sustained 16-chunk backlog, and the browser resyncs on
         // the next keyframe when that happens.
         self.media
-            .put_data(topic, crate::outbox::LANE_DEFAULT, frame.clone());
+            .put_data(topic, crate::outbox::LANE_DEFAULT, frame.clone())
     }
 
     /// Handle one control-stream op from the browser — the same control protocol as the data WS.
@@ -584,6 +586,13 @@ mod tests {
         assert!(!futures_ready(&sess.media));
         hub.route_media("/cam", &Bytes::from_static(b"chunk"));
         assert_eq!(&block_get(&sess.media).unwrap()[..], b"chunk");
+
+        for i in 0..17 {
+            hub.route_media("/cam", &Bytes::from(format!("chunk-{i}")));
+        }
+        let pressure = rx.try_recv().unwrap();
+        assert_eq!(pressure["op"], "media-pressure");
+        assert_eq!(pressure["topic"], "/cam");
 
         sess.on_control(&hub, &json!({"op": "media-stop", "topic": "/cam"}));
         let subs = rx.try_recv().unwrap();

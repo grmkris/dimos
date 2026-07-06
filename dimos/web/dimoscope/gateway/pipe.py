@@ -24,7 +24,8 @@
 #   kind 2 = JSON (both directions):
 #     downstream  hello{topics,label,rpc} · topic{topic,type} · rpc-res{sid,id,res|error} ·
 #                 rtc-offer{rsid,sdp}   (SDP relayed from the /rtc websocket)
-#     upstream    subs{topics[]} · teleop{sid,linearX,angularZ,ttlMs} · stop{sid} · goal{x,y,z} ·
+#     upstream    subs{topics[]} · media-subs{topics[]} · media-pressure{topic} ·
+#                 teleop{sid,linearX,angularZ,ttlMs} · stop{sid} · goal{x,y,z} ·
 #                 rpc{sid,id,target,method,args} · disconnect{sid} · rtc-answer{rsid,sdp|error}
 #   kind 3 = MEDIA (gateway→sidecar): WebCodecs H.264 chunk, same browser wire as /media:
 #            [u8 flags][u64 ts_us][u16 topic_len][topic][Annex-B H.264]
@@ -67,6 +68,8 @@ class PipePlane:
         self.on_rtc_answer: Callable[[dict[str, Any]], None] | None = None
         # Installed by MediaPlane: the sidecar announces the union of WT-media camera subscriptions.
         self.on_media_subs: Callable[[set[str]], None] | None = None
+        # Installed by MediaPlane: the sidecar reports WT-media drops so the encoder can force IDR/ABR.
+        self.on_media_pressure: Callable[[str], None] | None = None
         bus.subscribe(self._on_sample)
         bus.on_new_topic(self._on_new_topic)
 
@@ -221,6 +224,10 @@ class _Conn:
             self.media_subs = set(m.get("topics") or [])
             if self.plane.on_media_subs is not None:
                 self.plane.on_media_subs(set(self.media_subs))
+        elif op == "media-pressure":
+            pressured = m.get("topic")
+            if isinstance(pressured, str) and self.plane.on_media_pressure is not None:
+                self.plane.on_media_pressure(pressured)
         elif op == "teleop":
             self.sids.add(m["sid"])
             egress.teleop(

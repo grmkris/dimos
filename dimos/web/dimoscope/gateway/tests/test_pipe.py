@@ -74,8 +74,10 @@ class Harness:
         self.bus = Bus()
         self.egress, self.pub = _egress()
         self.media_subs = []
+        self.media_pressure = []
         self.plane = PipePlane(self.bus, self.egress, media_kinds=["webcodecs", "jpeg"])
         self.plane.on_media_subs = lambda topics: self.media_subs.append(topics)
+        self.plane.on_media_pressure = lambda topic: self.media_pressure.append(topic)
         self.path = tempfile.mktemp(suffix=".sock")
         self.server_task = asyncio.ensure_future(self.plane.start(self.path))
         for _ in range(100):  # wait for the listener
@@ -282,6 +284,9 @@ def test_media_subs_and_frames_use_dedicated_pipe_kind():
             h.send_json({"op": "media-subs", "topics": ["/cam"]})
             await h.settle()
             assert h.media_subs[-1] == {"/cam"}
+            h.send_json({"op": "media-pressure", "topic": "/cam"})
+            await h.settle()
+            assert h.media_pressure == ["/cam"]
 
             frame = b"\x01" + (123).to_bytes(8, "big") + (4).to_bytes(2, "big") + b"/cam" + b"h264"
             h.plane.send_media(frame)

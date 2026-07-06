@@ -208,15 +208,16 @@ impl PriorityOutbox {
     /// JSON control (hello/topic/rpc-res) — top priority, generously buffered. Unused on the WT path
     /// (control rides its own QUIC stream, written directly) but kept for parity with qos.py.
     #[allow(dead_code)]
-    pub fn put_control(&self, item: Bytes) {
-        self.put("\x00ctl", CONTROL, item);
+    pub fn put_control(&self, item: Bytes) -> bool {
+        self.put("\x00ctl", CONTROL, item)
     }
 
-    pub fn put_data(&self, topic: &str, lane: Lane, item: Bytes) {
-        self.put(topic, lane, item);
+    pub fn put_data(&self, topic: &str, lane: Lane, item: Bytes) -> bool {
+        self.put(topic, lane, item)
     }
 
-    fn put(&self, topic: &str, (prio, conflate, depth): Lane, item: Bytes) {
+    fn put(&self, topic: &str, (prio, conflate, depth): Lane, item: Bytes) -> bool {
+        let mut shed = false;
         {
             let mut inner = self.inner.lock().expect("outbox lock");
             let class = &mut inner.cls[prio];
@@ -232,10 +233,12 @@ impl PriorityOutbox {
             };
             if bucket.frames.len() >= bucket.maxlen {
                 bucket.frames.pop_front(); // conflate → overwrite; reliable → bounded keep_last
+                shed = true;
             }
             bucket.frames.push_back(item);
         }
         self.notify.notify_one();
+        shed
     }
 
     pub async fn get(&self) -> Bytes {

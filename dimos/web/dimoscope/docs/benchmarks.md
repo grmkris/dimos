@@ -57,28 +57,28 @@ Useful URL parameters:
 
 ### Preset URLs
 
-Use these with `deno task app` running locally. Replace `<gw-host>` with the machine running the
-gateway. Use `localhost%3A8080` instead of `<gw-host>%3A8080` for a fully local run. The URLs
-preselect the drawer; append `&run=1` to auto-start after load.
+Use these with `deno task app` running locally. `GW-HOST%3A8080` is the machine running the
+gateway (host:port, URL-encoded — `%3A` is `:`). Use `localhost%3A8080` for a fully
+local run. The URLs preselect the drawer; append `&run=1` to auto-start after load.
 
 Main transport comparison:
 
 ```text
-http://localhost:5173/?gw=<gw-host>%3A8080&transport=webtransport&profiles=pose%2Clidar%2Cdense&coex=1&net=clean%2Cwifi-normal%2Cwifi-crowded%2Closs-5&dur=15000
-http://localhost:5173/?gw=<gw-host>%3A8080&transport=webrtc&profiles=pose%2Clidar%2Cdense&coex=1&net=clean%2Cwifi-normal%2Cwifi-crowded%2Closs-5&dur=15000
-http://localhost:5173/?gw=<gw-host>%3A8080&transport=ws&profiles=pose%2Clidar%2Cdense&coex=1&net=clean%2Cwifi-normal%2Cwifi-crowded%2Closs-5&dur=15000
+http://localhost:5173/?gw=GW-HOST%3A8080&transport=webtransport&profiles=pose%2Clidar%2Cdense&coex=1&net=clean%2Cwifi-normal%2Cwifi-crowded%2Closs-5&dur=15000
+http://localhost:5173/?gw=GW-HOST%3A8080&transport=webrtc&profiles=pose%2Clidar%2Cdense&coex=1&net=clean%2Cwifi-normal%2Cwifi-crowded%2Closs-5&dur=15000
+http://localhost:5173/?gw=GW-HOST%3A8080&transport=ws&profiles=pose%2Clidar%2Cdense&coex=1&net=clean%2Cwifi-normal%2Cwifi-crowded%2Closs-5&dur=15000
 ```
 
 Point-cloud compression:
 
 ```text
-http://localhost:5173/?gw=<gw-host>%3A8080&transport=webtransport&profiles=cloud%2Ccloud-ds%2Ccloud-draco&net=clean&dur=15000
+http://localhost:5173/?gw=GW-HOST%3A8080&transport=webtransport&profiles=cloud%2Ccloud-ds%2Ccloud-draco&net=clean&dur=15000
 ```
 
 On-demand bandwidth cut:
 
 ```text
-http://localhost:5173/?gw=<gw-host>%3A8080&transport=ws&profiles=all-lanes%2Con-demand&net=clean&dur=10000
+http://localhost:5173/?gw=GW-HOST%3A8080&transport=ws&profiles=all-lanes%2Con-demand&net=clean&dur=10000
 ```
 
 ## QoS Model
@@ -172,8 +172,9 @@ Measured on a 100 Mbit throttled link:
 | Auto | WebRTC | WebCodecs when supported |
 
 WebCodecs over WebTransport (`webTransportWebCodecsMedia`, dedicated media WT session): first-load
-14.3 fps at 7-9 ms age with zero TCP — data and video both on QUIC; falls back to the `/media` WS
-mid-chain, then WebRTC, then JPEG.
+14.3 fps at 7-9 ms age with zero TCP. In `auto` and explicit `webtransport` modes, data and video
+both use QUIC, but video is a sibling WT media session rather than the same browser `DimosClient`
+connection. It falls back to the `/media` WS mid-chain, then WebRTC, then JPEG.
 
 ## Adaptive Bitrate
 

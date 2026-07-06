@@ -86,6 +86,7 @@ def build_app() -> FastAPI:
     pipe = PipePlane(bus, egress, media_kinds=MEDIA_KINDS)
     media.set_wt_sink(pipe.send_media)
     pipe.on_media_subs = media.set_wt_subs
+    pipe.on_media_pressure = media.on_wt_pressure
     rtc = RtcSignalRelay(pipe)  # /rtc = SDP relay; the sidecar owns the WebRTC sessions
 
     @asynccontextmanager

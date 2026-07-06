@@ -121,7 +121,11 @@ function experimentalServers(
         await c.connect(`https://${gateway.split(":")[0]}:${WT_PORT}`);
         return c;
       },
-      media: { ...media },
+      media: {
+        ...media,
+        wtUrl: `https://${gateway.split(":")[0]}:${WT_PORT}`,
+        certHashUrl: `${httpBase}/cert`,
+      },
     },
   ];
 }

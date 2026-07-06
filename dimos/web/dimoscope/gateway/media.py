@@ -106,7 +106,23 @@ class MediaPlane:
         new_topics = set(topics)
         for topic in new_topics - self.wt_webcodecs_subs:
             self.force_key.add(topic)
+        gone = self.wt_webcodecs_subs - new_topics
         self.wt_webcodecs_subs = new_topics
+        for topic in gone:
+            self._maybe_forget(topic)
+
+    def _maybe_forget(self, topic: str) -> None:
+        """Last viewer of a topic left (any path) → the next session starts at full quality."""
+        if self._abr and not self.webcodecs_subs.get(topic) and topic not in self.wt_webcodecs_subs:
+            self._abr.forget(topic)
+
+    def on_wt_pressure(self, topic: str) -> None:
+        """WT sidecar shed queued H.264 for this topic; rebuild lower-bitrate and resync."""
+        if not topic:
+            return
+        self.force_key.add(topic)
+        if self._abr and self._abr.on_shed(topic, time.monotonic()):
+            self.encoders.pop(topic, None)
 
     # bus tap (loop thread, cheap): only camera topics with live viewers
     def _on_sample(self, s: Sample) -> None:
@@ -326,12 +342,15 @@ class MediaPlane:
                             json.dumps({"op": "video-config", "topic": t, "codec": "avc1.42E01F"})
                         )
                 elif op == "webcodecs-stop":
-                    s = self.webcodecs_subs.get(m.get("topic"))
+                    t = m.get("topic")
+                    s = self.webcodecs_subs.get(t)
                     if s is not None:
                         s.discard(ws)
+                        self._maybe_forget(t)
         except (WebSocketDisconnect, json.JSONDecodeError, RuntimeError):
             pass
         finally:
             await self._close_pcs(ws)
-            for s in self.webcodecs_subs.values():
+            for t, s in self.webcodecs_subs.items():
                 s.discard(ws)
+                self._maybe_forget(t)

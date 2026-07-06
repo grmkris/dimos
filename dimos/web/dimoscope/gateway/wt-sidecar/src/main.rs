@@ -367,13 +367,13 @@ async fn drain_bulk(conn: Arc<Connection>, sess: Arc<Session>, knobs: SessionKno
     }
 }
 
-/// Encoded H.264 chunks for WebCodecs WT media. This is a dedicated stream, prioritized above the
-/// bulk topic stream and below control; the media outbox is per-topic conflated before writes.
+/// Encoded H.264 chunks for WebCodecs WT media. Each encoded frame rides its own uni stream,
+/// prioritized above the bulk topic stream and below control. That keeps a lost stale frame from
+/// head-of-line blocking newer frames on the same reliable byte stream.
 async fn drain_media(conn: Arc<Connection>, sess: Arc<Session>) {
-    let mut media: Option<wtransport::SendStream> = None;
     loop {
         let frame = sess.media.get().await;
-        if send_media(&conn, &mut media, &frame).await.is_err() {
+        if send_media(&conn, &frame).await.is_err() {
             error!(
                 sid = sess.sid,
                 "media stream write failed — session drain stopped"
@@ -383,19 +383,12 @@ async fn drain_media(conn: Arc<Connection>, sess: Arc<Session>) {
     }
 }
 
-async fn send_media(
-    conn: &Connection,
-    media: &mut Option<wtransport::SendStream>,
-    frame: &Bytes,
-) -> Result<()> {
-    if media.is_none() {
-        let s = conn.open_uni().await?.await?;
-        s.set_priority(0); // control=1, media=0, bulk=-1
-        *media = Some(s);
-    }
-    let s = media.as_mut().expect("media stream just opened");
+async fn send_media(conn: &Connection, frame: &Bytes) -> Result<()> {
+    let mut s = conn.open_uni().await?.await?;
+    s.set_priority(0); // control=1, media=0, bulk=-1
     s.write_all(&(frame.len() as u32).to_be_bytes()).await?;
     s.write_all(frame).await?;
+    s.finish().await?;
     Ok(())
 }
 
