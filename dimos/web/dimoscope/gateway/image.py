@@ -82,10 +82,14 @@ class ImagePlane:
             if msg.step and msg.step > w * ch:  # row-padded stride → slice the padding off
                 arr = arr.reshape(h, int(msg.step))[:, : w * ch]
             shape = (h, w) if ch == 1 else (h, w, ch)
-            kw = {"jpeg_subsample": TJSAMP_GRAY} if ch == 1 else {}  # gray needs its own subsampling
+            kw = (
+                {"jpeg_subsample": TJSAMP_GRAY} if ch == 1 else {}
+            )  # gray needs its own subsampling
             jpeg = self._tj.encode(
-                np.ascontiguousarray(arr.reshape(shape)), quality=JPEG_QUALITY,
-                pixel_format=pixfmt, **kw
+                np.ascontiguousarray(arr.reshape(shape)),
+                quality=JPEG_QUALITY,
+                pixel_format=pixfmt,
+                **kw,
             )
             # Reuse the decoded struct: keep header (ts + frame_id → latency/seq continuity), swap data.
             msg.encoding = "jpeg"
@@ -98,7 +102,9 @@ class ImagePlane:
             # malformed camera silently never gets its _jpeg sibling.
             if topic not in self._failed:
                 self._failed.add(topic)
-                logger.warning("image transcode failed — topic stays raw", topic=topic, error=str(e))
+                logger.warning(
+                    "image transcode failed — topic stays raw", topic=topic, error=str(e)
+                )
             return
         self._failed.discard(topic)
         self.bus.republish(topic + "_jpeg", "sensor_msgs.Image", out)

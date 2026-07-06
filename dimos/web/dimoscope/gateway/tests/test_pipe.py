@@ -212,12 +212,21 @@ def test_rpc_round_trip():
         async with Harness() as h:
             await h.read_json()
             h.send_json(
-                {"op": "rpc", "sid": 3, "id": 42, "target": "GO2Connection", "method": "standup", "args": []}
+                {
+                    "op": "rpc",
+                    "sid": 3,
+                    "id": 42,
+                    "target": "GO2Connection",
+                    "method": "standup",
+                    "args": [],
+                }
             )
             res = await h.read_json()
             assert res == {"op": "rpc-res", "sid": 3, "id": 42, "res": "ok:GO2Connection/standup"}
 
-            h.send_json({"op": "rpc", "sid": 3, "id": 43, "target": "Nope", "method": "x", "args": []})
+            h.send_json(
+                {"op": "rpc", "sid": 3, "id": 43, "target": "Nope", "method": "x", "args": []}
+            )
             res = await h.read_json()
             assert res["error"].startswith("not allowed")  # server-authoritative whitelist
 

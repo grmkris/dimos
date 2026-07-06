@@ -155,9 +155,7 @@ class MediaPlane:
                 buf = bytes(pkt)
                 if buf:
                     ts = int(pkt.pts) if pkt.pts is not None else int(time.time() * 1_000_000)
-                    loop.call_soon_threadsafe(
-                        self._q_put, (topic, buf, bool(pkt.is_keyframe), ts)
-                    )
+                    loop.call_soon_threadsafe(self._q_put, (topic, buf, bool(pkt.is_keyframe), ts))
         except Exception:
             pass  # an encode hiccup must never disturb other viewers
 

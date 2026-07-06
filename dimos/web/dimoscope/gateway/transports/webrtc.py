@@ -15,7 +15,9 @@ from fastapi import WebSocket, WebSocketDisconnect
 if TYPE_CHECKING:  # runtime import would be circular: pipe → transports._common → this module
     from ..pipe import PipePlane
 
-ANSWER_TIMEOUT_S = 10  # host-candidates only, no STUN — gathering is quick; a miss means a dead plane
+ANSWER_TIMEOUT_S = (
+    10  # host-candidates only, no STUN — gathering is quick; a miss means a dead plane
+)
 
 
 class RtcSignalRelay:
@@ -44,13 +46,17 @@ class RtcSignalRelay:
                 self._pending[rsid] = fut
                 if not self.pipe.rtc_offer(rsid, m["sdp"]):
                     self._pending.pop(rsid, None)
-                    await ws.send_text(json.dumps({"op": "error", "error": "sidecar not connected"}))
+                    await ws.send_text(
+                        json.dumps({"op": "error", "error": "sidecar not connected"})
+                    )
                     continue
                 try:
                     ans = await asyncio.wait_for(fut, timeout=ANSWER_TIMEOUT_S)
                 except asyncio.TimeoutError:
                     self._pending.pop(rsid, None)
-                    await ws.send_text(json.dumps({"op": "error", "error": "sidecar answer timeout"}))
+                    await ws.send_text(
+                        json.dumps({"op": "error", "error": "sidecar answer timeout"})
+                    )
                     continue
                 if ans.get("error"):
                     await ws.send_text(json.dumps({"op": "error", "error": ans["error"]}))

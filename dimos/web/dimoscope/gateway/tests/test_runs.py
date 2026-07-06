@@ -12,7 +12,7 @@ import types
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent.parent))  # dimoscope root → gateway pkg
 
-from gateway import runs  # noqa: E402
+from gateway import runs
 
 
 class FakeRequest:
@@ -48,9 +48,7 @@ def test_unknown_blueprint_and_recording_are_rejected(monkeypatch):
     monkeypatch.setattr(runs, "RUNS_CTL", True)
     monkeypatch.setattr(runs, "_dbs", lambda: ["go2_short"])
     bad_bp = asyncio.run(runs.start_run(FakeRequest({"blueprint": "rm -rf /"})))
-    bad_db = asyncio.run(
-        runs.start_run(FakeRequest({"blueprint": "unitree-go2", "db": "nope"}))
-    )
+    bad_db = asyncio.run(runs.start_run(FakeRequest({"blueprint": "unitree-go2", "db": "nope"})))
     assert bad_bp.status_code == 400 and bad_db.status_code == 400
 
 
@@ -70,9 +68,7 @@ def test_start_stops_the_active_run_then_spawns(monkeypatch):
     monkeypatch.setattr(runs, "_stop_active", fake_stop)
     monkeypatch.setattr(runs, "_spawn", fake_spawn)
     monkeypatch.setattr(runs, "_active", lambda: {"runId": "r2"})
-    resp = asyncio.run(
-        runs.start_run(FakeRequest({"blueprint": "unitree-go2", "db": "go2_short"}))
-    )
+    resp = asyncio.run(runs.start_run(FakeRequest({"blueprint": "unitree-go2", "db": "go2_short"})))
     assert resp.status_code == 200
     assert calls == ["stop", ("spawn", "unitree-go2", "go2_short")]
     assert _body(resp)["active"] == {"runId": "r2"}

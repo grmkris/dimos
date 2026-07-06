@@ -54,6 +54,7 @@ class ConflatedIngest:
         topic = next(iter(self._latest))  # insertion order → round-robin-ish across topics
         return topic, self._latest.pop(topic)
 
+
 # Last-value cache: one frame per topic, so a late-joining client is handed the most recent
 # sample on subscribe (Foxglove-style durability ≈ DDS TRANSIENT_LOCAL, without publisher
 # declarations). Frames above this cap are not cached — a firehose topic must not pin tens of MB.

@@ -117,7 +117,11 @@ def generate(paths: list[Path]) -> str:
 
     topic_rows: list[str] = []
     for topic, ts in topics.items():
-        note = f"  // conflict: also seen as {', '.join(sorted(conflicts[topic]))}" if topic in conflicts else ""
+        note = (
+            f"  // conflict: also seen as {', '.join(sorted(conflicts[topic]))}"
+            if topic in conflicts
+            else ""
+        )
         topic_rows.append(f'  "{topic}": {ts};{note}' if ts else f'  "{topic}": unknown;{note}')
 
     cmd_block = (

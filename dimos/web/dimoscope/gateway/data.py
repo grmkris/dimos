@@ -88,8 +88,9 @@ class DataPlane:
         next republish. Freshly stamped (the gateway→browser hop reads true); srcTs/seq stay old,
         so stale data honestly reads stale. Rides the normal outbox: lane class + maxHz apply."""
         samples = (
-            list(self.bus.last.values()) if topic == "*" else
-            ([self.bus.last[topic]] if topic in self.bus.last else [])
+            list(self.bus.last.values())
+            if topic == "*"
+            else ([self.bus.last[topic]] if topic in self.bus.last else [])
         )
         if not samples:
             return

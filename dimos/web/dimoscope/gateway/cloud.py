@@ -116,7 +116,9 @@ class CloudPlane:
             else:
                 ds = pts
             out = PointCloud2.from_numpy(ds, frame_id=frame_id, timestamp=ts)
-            payload = out.lcm_encode(frame_id=frame_id)  # keep frame_id → seq continuity for the bench
+            payload = out.lcm_encode(
+                frame_id=frame_id
+            )  # keep frame_id → seq continuity for the bench
         except Exception:
             return
         self.bus.republish(topic + "_ds", "sensor_msgs.PointCloud2", payload)
@@ -129,7 +131,9 @@ class CloudPlane:
             )
             # envelope: [u32be seq][u32be nPoints][f64be ts_s] then the Draco blob. ts → the client's
             # srcTs so the Draco variant reports end-to-end latency like the standard clouds.
-            payload = struct.pack(">IId", _seq_of(frame_id), len(pts), float(ts or 0.0)) + bytes(draco)
+            payload = struct.pack(">IId", _seq_of(frame_id), len(pts), float(ts or 0.0)) + bytes(
+                draco
+            )
         except Exception:
             return
         self.bus.republish(topic + "_draco", DRACO_TYPE, payload)

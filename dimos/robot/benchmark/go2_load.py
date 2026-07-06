@@ -139,7 +139,9 @@ class GO2Load(Module):
         }
         if self.config.autostart:
             self.start_all()
-            if self.config.heavy_hz > 0:  # config-driven flood (headless / tests); else wait for start_bench
+            if (
+                self.config.heavy_hz > 0
+            ):  # config-driven flood (headless / tests); else wait for start_bench
                 self.start_bench()
 
     @rpc
