@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+from typing import Any
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
@@ -81,7 +82,7 @@ async def _wrapper(*args: str) -> tuple[int, str]:
     return proc.returncode or 0, out.decode(errors="replace").strip()
 
 
-async def _state() -> dict:
+async def _state() -> dict[str, Any]:
     enabled = NETEM_CTL and sys.platform == "linux" and os.path.exists(WRAPPER)
     active = "clean"
     if enabled:

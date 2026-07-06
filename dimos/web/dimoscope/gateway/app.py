@@ -29,6 +29,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 import os
 from pathlib import Path
@@ -84,7 +85,7 @@ def build_app() -> FastAPI:
     rtc = RtcSignalRelay(pipe)  # /rtc = SDP relay; the sidecar owns the WebRTC sessions
 
     @asynccontextmanager
-    async def lifespan(_app: FastAPI):
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         bus.start_zenoh(ZENOH_KEY)
         await bus.start_lcm(LCM_HOST, LCM_PORT)
         egress.start()

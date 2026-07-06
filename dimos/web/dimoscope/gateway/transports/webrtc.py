@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from fastapi import WebSocket, WebSocketDisconnect
 
@@ -24,11 +24,14 @@ class RtcSignalRelay:
     def __init__(self, pipe: PipePlane) -> None:
         self.pipe = pipe
         self._rsid = itertools.count(1)
-        self._pending: dict[int, asyncio.Future] = {}
+        self._pending: dict[int, asyncio.Future[dict[str, Any]]] = {}
         pipe.on_rtc_answer = self._on_answer
 
-    def _on_answer(self, m: dict) -> None:
-        fut = self._pending.pop(m.get("rsid"), None)
+    def _on_answer(self, m: dict[str, Any]) -> None:
+        rsid = m.get("rsid")
+        if rsid is None:
+            return
+        fut = self._pending.pop(rsid, None)
         if fut is not None and not fut.done():
             fut.set_result(m)
 
@@ -42,7 +45,7 @@ class RtcSignalRelay:
                 if m.get("op") != "offer":
                     continue
                 rsid = next(self._rsid)
-                fut: asyncio.Future = asyncio.get_running_loop().create_future()
+                fut: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
                 self._pending[rsid] = fut
                 if not self.pipe.rtc_offer(rsid, m["sdp"]):
                     self._pending.pop(rsid, None)

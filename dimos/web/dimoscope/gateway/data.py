@@ -11,6 +11,7 @@ import json
 import os
 import struct
 import time
+from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
 
@@ -40,7 +41,7 @@ class _Client:
         self.rate: dict[str, float] = {}  # topic -> maxHz (0/absent = unlimited)
         self.last: dict[str, float] = {}  # topic -> last forward time (ms)
         self.qos: dict[
-            str, tuple
+            str, tuple[int, bool, int]
         ] = {}  # topic -> (rank, conflate, depth) client override (else default)
         self.q = PriorityOutbox()  # per-client priority + conflation outbox
 
@@ -148,7 +149,9 @@ class DataPlane:
         except (WebSocketDisconnect, RuntimeError, asyncio.CancelledError):
             pass
 
-    async def _on_control(self, ws, st: _Client, m: dict, loop) -> None:
+    async def _on_control(
+        self, ws: WebSocket, st: _Client, m: dict[str, Any], loop: asyncio.AbstractEventLoop
+    ) -> None:
         op = m.get("op")
         if op == "subscribe":
             st.subs.add(m["topic"])
@@ -180,10 +183,12 @@ class DataPlane:
         elif op == "goal":
             self.egress.goal(m.get("x", 0), m.get("y", 0), m.get("z", 0))
         elif op == "rpc":
-            res = await self.egress.rpc(m.get("target"), m.get("method"), m.get("args") or [], loop)
+            res = await self.egress.rpc(
+                str(m.get("target")), str(m.get("method")), m.get("args") or [], loop
+            )
             st.q.put_control(json.dumps({"op": "rpc-res", "id": m.get("id"), **res}))
 
-    def _apply_qos(self, st: _Client, topic: str, m: dict) -> None:
+    def _apply_qos(self, st: _Client, topic: str, m: dict[str, Any]) -> None:
         """Store the client's declared QoS override for `topic` (priority/reliability/depth merged onto
         the server default), or clear it back to the default if the client declared none."""
         if any(m.get(k) is not None for k in ("priority", "reliability", "depth")):

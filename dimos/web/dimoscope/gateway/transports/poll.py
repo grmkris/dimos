@@ -20,9 +20,9 @@ POLL_WAIT_S = 10.0
 class PollPlane:
     def __init__(self, bus: Bus) -> None:
         self.bus = bus
-        self.ring: deque = deque(maxlen=POLL_RING_MAX)  # (id, topic, frame)
+        self.ring: deque[tuple[int, str, bytes]] = deque(maxlen=POLL_RING_MAX)  # (id, topic, frame)
         self.seq = 0
-        self._waiters: set[asyncio.Future] = set()
+        self._waiters: set[asyncio.Future[None]] = set()
         bus.subscribe(self._on_sample)
 
     def _on_sample(self, s: Sample) -> None:
@@ -33,8 +33,8 @@ class PollPlane:
                 f.set_result(None)
         self._waiters.clear()
 
-    def _collect(self, since: int, subs: set[str], max_n: int) -> list:
-        out = []
+    def _collect(self, since: int, subs: set[str], max_n: int) -> list[tuple[int, bytes]]:
+        out: list[tuple[int, bytes]] = []
         for eid, topic, fr in self.ring:
             if eid <= since or not wants(subs, topic):
                 continue

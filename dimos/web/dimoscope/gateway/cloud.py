@@ -38,7 +38,7 @@ except Exception:  # pragma: no cover - depends on the optional open3d/numpy ins
 # Draco point-cloud codec (optional): geometry quantization at the source. Preflight-gated —
 # a missing DracoPy just disables the _draco variant; _ds still ships.
 try:
-    import DracoPy  # type: ignore[import-untyped]
+    import DracoPy  # type: ignore[import-not-found,import-untyped]
 
     HAS_DRACO = True
 except Exception:  # pragma: no cover - optional native dep
@@ -108,7 +108,7 @@ class CloudPlane:
         if DRACO_ON:
             self._emit_draco(topic, pts, frame_id, ts)
 
-    def _emit_ds(self, topic: str, pts, frame_id: str, ts) -> None:
+    def _emit_ds(self, topic: str, pts: np.ndarray, frame_id: str, ts: float | None) -> None:
         try:
             if len(pts) > DS_MAX_POINTS:
                 step = -(-len(pts) // DS_MAX_POINTS)  # ceil division → deterministic stride
@@ -123,7 +123,7 @@ class CloudPlane:
             return
         self.bus.republish(topic + "_ds", "sensor_msgs.PointCloud2", payload)
 
-    def _emit_draco(self, topic: str, pts, frame_id: str, ts) -> None:
+    def _emit_draco(self, topic: str, pts: np.ndarray, frame_id: str, ts: float | None) -> None:
         try:
             draco = DracoPy.encode(
                 pts.astype(np.float32),

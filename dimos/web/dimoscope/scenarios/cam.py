@@ -11,7 +11,7 @@
 # bulk, so its payload is minimal by design).
 #
 # Run (from dimos/web/dimoscope): DIMOS_TRANSPORT=zenoh uv run python scenarios/cam.py
-from common import (
+from dimos.web.dimoscope.scenarios.common import (
     Detection2DArray,
     Image,
     ImageFormat,

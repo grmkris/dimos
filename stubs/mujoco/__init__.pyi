@@ -52,6 +52,7 @@ class MjvOption:
     def __init__(self) -> None: ...
 
 class Renderer:
+    scene: Any
     def __init__(self, model: MjModel, height: int = ..., width: int = ...) -> None: ...
     def update_scene(
         self,
@@ -105,3 +106,7 @@ class mjtTrn:
 
 class mjtWrap:
     mjWRAP_JOINT: int
+
+class mjtRndFlag:
+    mjRND_SHADOW: int
+    mjRND_REFLECTION: int

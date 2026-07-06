@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 import os
 from pathlib import Path
 import sys
+from typing import Any
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
@@ -39,7 +40,7 @@ def _dbs() -> list[str]:
     return sorted(p.name.removesuffix(".db.tar.gz") for p in lfs.glob("*.db.tar.gz"))
 
 
-def _active() -> dict | None:
+def _active() -> dict[str, Any] | None:
     entry = get_most_recent(alive_only=True)
     if entry is None:
         return None
@@ -66,7 +67,7 @@ def _argv_db(argv: list[str]) -> str | None:
         return None
 
 
-def _state() -> dict:
+def _state() -> dict[str, Any]:
     return {
         "enabled": RUNS_CTL,
         "active": _active(),

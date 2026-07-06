@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 import struct
 import time
+from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
 
@@ -55,17 +56,19 @@ class MediaPlane:
     def __init__(self, bus: Bus) -> None:
         self.bus = bus
         # WebRTC: camera topic -> CameraVideoTracks wanting its frames; ws -> live PCs.
-        self.webrtc_tracks: dict[str, set] = {}
-        self.webrtc_pcs: dict[object, list] = {}
+        self.webrtc_tracks: dict[str, set[CameraVideoTrack]] = {}
+        self.webrtc_pcs: dict[WebSocket, list[tuple[RTCPeerConnection, CameraVideoTrack, str]]] = {}
         # WebCodecs: camera topic -> set of ws wanting H.264 chunks; one encoder per topic.
-        self.webcodecs_subs: dict[str, set] = {}
-        self.encoders: dict[str, object] = {}
+        self.webcodecs_subs: dict[str, set[WebSocket]] = {}
+        self.encoders: dict[str, av.VideoCodecContext] = {}
         self.force_key: set[str] = set()
         self._in = ConflatedIngest()  # freshest-wins: a slow encoder lowers fps, never adds lag
-        self._arrivals: dict[str, deque] = {}  # topic → recent arrival times (measures real fps)
+        self._arrivals: dict[
+            str, deque[float]
+        ] = {}  # topic → recent arrival times (measures real fps)
         # Encoded NAL → fanout. Bounded for the same reason ingest conflates: a slow viewer must
         # shed frames, not grow a backlog every viewer then waits behind.
-        self._video_q: asyncio.Queue = asyncio.Queue(maxsize=64)
+        self._video_q: asyncio.Queue[tuple[str, bytes, bool, int]] = asyncio.Queue(maxsize=64)
         self._exec = ThreadPoolExecutor(
             max_workers=1
         )  # serialise encode → encoders stay single-thread
@@ -98,7 +101,7 @@ class MediaPlane:
             topic, payload = await self._in.get()
             await loop.run_in_executor(self._exec, self._process, topic, payload, loop)
 
-    def _process(self, topic: str, payload: bytes, loop) -> None:
+    def _process(self, topic: str, payload: bytes, loop: asyncio.AbstractEventLoop) -> None:
         """Executor thread: decode the Image once, feed WebRTC tracks + the WebCodecs encoder."""
         try:
             img = Image.lcm_decode(payload)
@@ -111,7 +114,7 @@ class MediaPlane:
         if self.webcodecs_subs.get(topic):
             self._encode_webcodecs(topic, img, loop)
 
-    def _encode_webcodecs(self, topic: str, img, loop) -> None:
+    def _encode_webcodecs(self, topic: str, img: Image, loop: asyncio.AbstractEventLoop) -> None:
         try:
             data = img.data
             h, w = int(data.shape[0]), int(data.shape[1])
@@ -140,9 +143,8 @@ class MediaPlane:
                     "x264-params": "repeat-headers=1",  # SPS/PPS before every IDR → late joiners decode
                 }
                 self.encoders[topic] = enc
-            frame = av.VideoFrame.from_ndarray(
-                data, format=_AV_FMT.get(getattr(img, "format", None), "bgr24")
-            )
+            fmt: Any = getattr(img, "format", None)
+            frame = av.VideoFrame.from_ndarray(data, format=_AV_FMT.get(fmt, "bgr24"))
             frame.pts = int(time.time() * 1_000_000)
             frame.time_base = Fraction(1, 1_000_000)
             if topic in self.force_key:
@@ -159,7 +161,7 @@ class MediaPlane:
         except Exception:
             pass  # an encode hiccup must never disturb other viewers
 
-    def _q_put(self, item: tuple) -> None:
+    def _q_put(self, item: tuple[str, bytes, bool, int]) -> None:
         """Loop thread: enqueue an encoded chunk, shedding the oldest when full. A dropped delta
         breaks that topic's GOP for viewers, so force an IDR to resync within a frame or two."""
         if self._video_q.full():
@@ -188,17 +190,17 @@ class MediaPlane:
                 except Exception:
                     subs.discard(ws)
 
-    def _add_track(self, topic: str, track) -> None:
+    def _add_track(self, topic: str, track: CameraVideoTrack) -> None:
         self.webrtc_tracks.setdefault(topic, set()).add(track)
 
-    def _drop_track(self, topic: str, track) -> None:
+    def _drop_track(self, topic: str, track: CameraVideoTrack) -> None:
         s = self.webrtc_tracks.get(topic)
         if s is not None:
             s.discard(track)
             if not s:
                 self.webrtc_tracks.pop(topic, None)
 
-    async def _close_pcs(self, ws) -> None:
+    async def _close_pcs(self, ws: WebSocket) -> None:
         for pc, track, topic in self.webrtc_pcs.pop(ws, []):
             self._drop_track(topic, track)
             try:
@@ -206,7 +208,7 @@ class MediaPlane:
             except Exception:
                 pass
 
-    async def _handle_webrtc_offer(self, ws, m: dict) -> None:
+    async def _handle_webrtc_offer(self, ws: WebSocket, m: dict[str, Any]) -> None:
         topic, sdp = m.get("topic"), m.get("sdp")
         if not topic or not sdp:
             return

@@ -33,8 +33,10 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 import json
 import struct
+from typing import Any
 
 from dimos.utils.logging_config import setup_logger
 
@@ -58,7 +60,7 @@ class PipePlane:
         self.egress = egress
         self._conn: _Conn | None = None
         # rtc-answer{rsid,sdp|error} handler, installed by the /rtc signaling relay.
-        self.on_rtc_answer: callable | None = None
+        self.on_rtc_answer: Callable[[dict[str, Any]], None] | None = None
         bus.subscribe(self._on_sample)
         bus.on_new_topic(self._on_new_topic)
 
@@ -134,7 +136,9 @@ class _Conn:
         self._q: asyncio.Queue[bytes] = asyncio.Queue(maxsize=QUEUE_MAX)
         self._dropped = 0
         self._writer_task = asyncio.ensure_future(self._drain())
-        self._rpc_tasks: set = set()  # keep refs so scheduled rpc coros aren't GC'd
+        self._rpc_tasks: set[asyncio.Task[None]] = (
+            set()
+        )  # keep refs so scheduled rpc coros aren't GC'd
 
     # enqueue (never blocks the bus callback); overflow → drop-oldest, logged
     def _enqueue(self, frame: bytes) -> None:
@@ -156,7 +160,7 @@ class _Conn:
     def send_data(self, lc02: bytes) -> None:
         self._enqueue(struct.pack(">IB", len(lc02) + 1, KIND_DATA) + lc02)
 
-    def send_json(self, obj: dict) -> None:
+    def send_json(self, obj: dict[str, Any]) -> None:
         payload = json.dumps(obj).encode()
         self._enqueue(struct.pack(">IB", len(payload) + 1, KIND_JSON) + payload)
 
@@ -182,7 +186,7 @@ class _Conn:
         except (asyncio.IncompleteReadError, ConnectionError, OSError):
             pass
 
-    def _on_op(self, m: dict) -> None:
+    def _on_op(self, m: dict[str, Any]) -> None:
         egress = self.plane.egress
         op = m.get("op")
         if op == "subs":  # the sidecar's sub-union across all its sessions
@@ -213,7 +217,7 @@ class _Conn:
             self._rpc_tasks.add(task)
             task.add_done_callback(self._rpc_tasks.discard)
         elif op == "disconnect":
-            sid = m.get("sid")
+            sid: Any = m.get("sid")
             self.sids.discard(sid)
             egress.disconnect((self, sid))
         elif op == "rtc-answer":
@@ -221,9 +225,11 @@ class _Conn:
             if cb is not None:
                 cb(m)
 
-    async def _do_rpc(self, m: dict) -> None:
+    async def _do_rpc(self, m: dict[str, Any]) -> None:
+        target: Any = m.get("target")
+        method: Any = m.get("method")
         res = await self.plane.egress.rpc(
-            m.get("target"), m.get("method"), m.get("args") or [], asyncio.get_running_loop()
+            target, method, m.get("args") or [], asyncio.get_running_loop()
         )
         self.send_json({"op": "rpc-res", "sid": m.get("sid"), "id": m.get("id"), **res})
 

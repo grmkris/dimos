@@ -11,8 +11,13 @@ from __future__ import annotations
 
 import asyncio
 import time
+from typing import TYPE_CHECKING, Any
 
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from dimos.core.transport import PubSubTransport
+    from dimos.protocol.rpc.spec import RPCSpec
 
 logger = setup_logger()
 
@@ -44,14 +49,16 @@ class SafetyEgress:
     """Teleop/goal/rpc egress with the safety boundary, keyed by a per-connection object."""
 
     def __init__(self) -> None:
-        self._cmd: list = []  # teleop Twist publishers (one per backend)
-        self._goal: list = []  # nav goal PointStamped publishers (one per backend)
-        self._rpc = None
+        self._cmd: list[PubSubTransport[Any]] = []  # teleop Twist publishers (one per backend)
+        self._goal: list[
+            PubSubTransport[Any]
+        ] = []  # nav goal PointStamped publishers (one per backend)
+        self._rpc: RPCSpec | None = None
         self.has_rpc = False
         self._deadman: dict[object, asyncio.TimerHandle] = {}  # per-connection
 
     @property
-    def commands(self) -> list:
+    def commands(self) -> list[dict[str, str]]:
         return RPC_COMMANDS if self.has_rpc else []
 
     # setup: publishers to both backends + the rpc bridge
@@ -101,7 +108,9 @@ class SafetyEgress:
             except Exception:
                 pass
 
-    def teleop(self, key: object, lin: float, ang: float, ttl_ms: float, loop) -> None:
+    def teleop(
+        self, key: object, lin: float, ang: float, ttl_ms: float, loop: asyncio.AbstractEventLoop
+    ) -> None:
         self._publish_twist(lin, ang)
         self._arm_deadman(key, ttl_ms, loop)
 
@@ -124,7 +133,7 @@ class SafetyEgress:
         self._cancel_deadman(key)
         self._publish_twist(0.0, 0.0)
 
-    def _arm_deadman(self, key: object, ttl_ms: float, loop) -> None:
+    def _arm_deadman(self, key: object, ttl_ms: float, loop: asyncio.AbstractEventLoop) -> None:
         h = self._deadman.get(key)
         if h:
             h.cancel()
@@ -137,14 +146,17 @@ class SafetyEgress:
         if h:
             h.cancel()
 
-    async def rpc(self, target: str, method: str, args: list, loop) -> dict:
+    async def rpc(
+        self, target: str, method: str, args: list[Any], loop: asyncio.AbstractEventLoop
+    ) -> dict[str, Any]:
         """Whitelisted dimos @rpc bridge → {"res": ...} or {"error": ...}."""
-        if (target, method) not in RPC_WHITELIST or self._rpc is None:
-            reason = "rpc unavailable" if self._rpc is None else f"not allowed: {target}/{method}"
+        rpc = self._rpc
+        if (target, method) not in RPC_WHITELIST or rpc is None:
+            reason = "rpc unavailable" if rpc is None else f"not allowed: {target}/{method}"
             return {"error": reason}
         try:
             res = await loop.run_in_executor(
-                None, lambda: self._rpc.call_sync(f"{target}/{method}", (list(args), {}))[0]
+                None, lambda: rpc.call_sync(f"{target}/{method}", (list(args), {}))[0]
             )
             return {"res": _jsonable(res)}
         except Exception as e:

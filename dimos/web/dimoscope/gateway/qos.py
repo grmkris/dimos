@@ -145,18 +145,20 @@ class PriorityOutbox:
 
     def __init__(self) -> None:
         # per class: OrderedDict[topic -> deque(frames)]; ordered for round-robin across topics
-        self._cls: list[OrderedDict[str, deque]] = [OrderedDict() for _ in range(_RANK)]
+        self._cls: list[OrderedDict[str, deque[str | bytes]]] = [
+            OrderedDict() for _ in range(_RANK)
+        ]
         self._credits = dict(_WEIGHTS)
         self._event = asyncio.Event()
 
     # put (loop thread, cheap, never blocks)
-    def put_control(self, item) -> None:  # type: ignore[no-untyped-def]
+    def put_control(self, item: str) -> None:
         self._put("\x00ctl", CONTROL[0], CONTROL[1], CONTROL[2], item)
 
-    def put_data(self, topic: str, prio: int, conflate: bool, depth: int, item) -> None:  # type: ignore[no-untyped-def]
+    def put_data(self, topic: str, prio: int, conflate: bool, depth: int, item: bytes) -> None:
         self._put(topic, prio, conflate, depth, item)
 
-    def _put(self, topic: str, prio: int, conflate: bool, depth: int, item) -> None:  # type: ignore[no-untyped-def]
+    def _put(self, topic: str, prio: int, conflate: bool, depth: int, item: str | bytes) -> None:
         bucket = self._cls[prio].get(topic)
         if bucket is None:
             bucket = deque(maxlen=1 if conflate else max(1, depth))
@@ -165,7 +167,7 @@ class PriorityOutbox:
         self._event.set()
 
     # get (writer)
-    async def get(self):  # type: ignore[no-untyped-def]
+    async def get(self) -> str | bytes:
         while True:
             item = self._pick()
             if item is not None:
@@ -173,7 +175,7 @@ class PriorityOutbox:
             self._event.clear()
             await self._event.wait()
 
-    def _pick(self):  # type: ignore[no-untyped-def]
+    def _pick(self) -> str | bytes | None:
         # weighted round-robin: serve a class while it has credit; refill when all credited classes drained
         for _ in range(2):  # at most one refill pass
             for c in range(_RANK - 1, -1, -1):
@@ -187,7 +189,7 @@ class PriorityOutbox:
             return None
         return None
 
-    def _pop_rr(self, c: int):  # type: ignore[no-untyped-def]
+    def _pop_rr(self, c: int) -> str | bytes:
         # round-robin across topics within a class: take the front topic, rotate it to the back
         topic, bucket = next(iter(self._cls[c].items()))
         item = bucket.popleft()

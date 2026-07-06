@@ -45,6 +45,7 @@ import time
 
 import numpy as np
 import reactivex as rx
+from reactivex.abc import DisposableBase
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
@@ -74,7 +75,7 @@ _MAX_HEAVY_BYTES = 12_000_000
 # WS-throughput number is fiction. Random bytes ≈ real camera/lidar entropy → honest wire load.
 def _make_cloud(n_points: int) -> PointCloud2:
     """A PointCloud2 of ~n_points (xyz float32). Built once; only ts/frame_id restamped per publish."""
-    import open3d as o3d  # lazy: only the cloud path needs Open3D
+    import open3d as o3d  # type: ignore[import-untyped]  # lazy: only the cloud path needs Open3D
 
     pts = np.random.default_rng(0).random((max(1, int(n_points)), 3)) * 10.0
     pcd = o3d.geometry.PointCloud()
@@ -124,10 +125,12 @@ class GO2Load(Module):
     def start(self) -> None:
         super().start()
         self._seq: dict[str, int] = {}
-        self._active: dict = {}  # name -> rx Disposable (the live lane interval)
+        self._active: dict[
+            str, DisposableBase
+        ] = {}  # name -> rx Disposable (the live lane interval)
         self._rate: dict[str, float] = {}  # name -> live Hz
         self._cloud = _make_cloud(self.config.cloud_points)
-        self._heavy_disp = None  # the /load/img flood disposable (or None)
+        self._heavy_disp: DisposableBase | None = None  # the /load/img flood disposable (or None)
         self._bench_kind: str | None = None  # "image" | "cloud" | None
         # name -> (port, default_hz, tick-factory)
         self._streams = {
@@ -243,7 +246,7 @@ class GO2Load(Module):
         return f"{name} @ {hz} Hz"
 
     @rpc
-    def status(self) -> dict:
+    def status(self) -> dict[str, float]:
         return {name: self._rate.get(name, 0.0) for name in self._streams}
 
     # ── the overload flood (the transport crash-ladder benchmark) ──

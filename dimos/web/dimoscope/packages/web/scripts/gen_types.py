@@ -51,7 +51,7 @@ def _ts_type(ann: object, pkgs: set[str], *, ret: bool = False) -> str:
     return "unknown"
 
 
-def _load(path: Path):
+def _load(path: Path) -> types.ModuleType:
     """Import a blueprint by file path (its dir on sys.path so `common` resolves); __main__ never runs."""
     sys.path.insert(0, str(path.resolve().parent))
     spec = importlib.util.spec_from_file_location(path.stem, path)

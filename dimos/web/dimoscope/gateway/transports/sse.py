@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from collections.abc import AsyncIterator
 import json
 
 from starlette.requests import Request
@@ -18,7 +19,7 @@ class _SseClient:
     __slots__ = ("q", "subs")
 
     def __init__(self, subs: set[str]) -> None:
-        self.q: asyncio.Queue = asyncio.Queue(maxsize=4096)
+        self.q: asyncio.Queue[bytes] = asyncio.Queue(maxsize=4096)
         self.subs = subs
 
 
@@ -52,7 +53,7 @@ class SsePlane:
             + "\n\n"
         ).encode()
 
-        async def gen():
+        async def gen() -> AsyncIterator[bytes]:
             yield hello
             try:
                 while True:

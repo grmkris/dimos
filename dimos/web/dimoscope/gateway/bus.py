@@ -12,6 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 import socket
 import struct
+from typing import Any
 
 from dimos.utils.logging_config import setup_logger
 
@@ -76,7 +77,7 @@ class Bus:
         self._lvc_skipped: set[str] = set()  # oversize topics already warned about
         self._consumers: list[Consumer] = []
         self._on_topic: list[Callable[[str, str], None]] = []
-        self._zenoh_session = None
+        self._zenoh_session: Any | None = None
         self._lcm_transport = None
         # LC03 reassembly, keyed by sequence number → partial message
         self._pending: dict[int, _Assembly] = {}
@@ -90,7 +91,7 @@ class Bus:
         """Notified (topic, type) the first time each topic is seen — for live discovery."""
         self._on_topic.append(cb)
 
-    def topic_list(self) -> list[dict]:
+    def topic_list(self) -> list[dict[str, str]]:
         return [{"topic": t, "type": ty} for t, ty in self.topics.items()]
 
     def republish(self, topic: str, typ: str, payload: bytes) -> None:
@@ -120,8 +121,8 @@ class Bus:
         elif topic not in self._lvc_skipped:
             self._lvc_skipped.add(topic)
             logger.warning("lvc: frame too large to cache", topic=topic, bytes=len(lc02))
-        for cb in self._consumers:
-            cb(s)  # cheap + sync (enqueue); never await here
+        for consumer in self._consumers:
+            consumer(s)  # cheap + sync (enqueue); never await here
 
     def start_zenoh(self, key: str = "**") -> None:
         self._loop = asyncio.get_running_loop()
@@ -131,7 +132,7 @@ class Bus:
             logger.warning("zenoh not installed — LCM tap only (uv sync --extra web)")
             return
 
-        def on_sample(sample) -> None:  # runs on a Zenoh thread
+        def on_sample(sample: Any) -> None:  # runs on a Zenoh thread
             k = str(sample.key_expr)
             try:
                 payload = sample.payload.to_bytes()
@@ -225,7 +226,7 @@ class Bus:
 class _Assembly:
     buf: bytearray
     channel: str
-    got: set
+    got: set[int]
     total: int
 
 
@@ -233,7 +234,7 @@ class _LcmProtocol(asyncio.DatagramProtocol):
     def __init__(self, bus: Bus) -> None:
         self._bus = bus
 
-    def datagram_received(self, data: bytes, addr) -> None:
+    def datagram_received(self, data: bytes, addr: Any) -> None:
         self._bus._on_lcm_datagram(data)
 
 

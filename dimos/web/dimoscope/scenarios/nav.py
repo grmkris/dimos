@@ -11,7 +11,7 @@
 # message TYPE, so the topic names don't matter.
 #
 # Run (from dimos/web/dimoscope):  DIMOS_TRANSPORT=zenoh uv run python scenarios/nav.py
-from common import (
+from dimos.web.dimoscope.scenarios.common import (
     IDENT,
     Module,
     ModuleConfig,
