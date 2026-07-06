@@ -171,6 +171,24 @@ Measured on a 100 Mbit throttled link:
 | WebRTC media | 12.7 fps, 46-71 ms jitter buffer | 14.2 fps, 9-19 ms jitter buffer |
 | Auto | WebRTC | WebCodecs when supported |
 
+WebCodecs over WebTransport (`webTransportWebCodecsMedia`, dedicated media WT session): first-load
+14.3 fps at 7-9 ms age with zero TCP — data and video both on QUIC; falls back to the `/media` WS
+mid-chain, then WebRTC, then JPEG.
+
+## Adaptive Bitrate
+
+The H.264 encoder is otherwise blind — fixed CRF regardless of what the link carries; past that
+point every transport can only queue or shed. `gateway/abr.py` runs a per-topic CRF ladder (rung 0 =
+`MEDIA_H264_CRF`, +5 per rung ≈ half the bits): a fanout shed or a stalled viewer steps quality
+down (at most once per 3 s), 15 s of clean delivery steps it back up. Slow WS viewers get frames
+skipped (one in-flight send each, forced IDR on rejoin) rather than evicted.
+
+Measured, 2 Mbit cap, WebCodecs over WS, 90 s: ABR off → 1.7 fps then 0 fps (dead, age frozen at
+5 s); ABR on → 11.5-15 fps sustained, ladder hunts CRF 20↔35 around capacity, wire settles at the
+pipe rate (~250 kB/s). Age under full saturation floats at seconds — kernel TCP socket buffering
+below the app — so the picture degrades to blurrier-but-live instead of sharp-but-frozen. Knobs:
+`VIDEO_ABR=0` disables, `VIDEO_ABR_LADDER="23,28,33,38"` overrides the rungs.
+
 ## Network Shaping
 
 `NETEM_CTL=1` enables `/netem` on Linux when the `dimos-netem` wrapper is installed:

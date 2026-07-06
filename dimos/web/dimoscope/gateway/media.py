@@ -34,6 +34,7 @@ from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
 
+from .abr import ABR_ON, AbrController
 from .bus import Bus, ConflatedIngest, Sample
 
 # WebRTC (optional): re-encode the camera Image as a video track via aiortc.
@@ -93,6 +94,9 @@ class MediaPlane:
         self._exec = ThreadPoolExecutor(
             max_workers=1
         )  # serialise encode → encoders stay single-thread
+        # Adaptive bitrate: fanout sheds (the link can't keep up) step the CRF ladder down —
+        # blurrier but live beats sharp but frozen; sustained clean delivery steps back up.
+        self._abr = AbrController(base_crf=int(MEDIA_H264_CRF)) if ABR_ON else None
         bus.subscribe(self._on_sample)
 
     def set_wt_sink(self, sink: Callable[[bytes], None]) -> None:
@@ -168,7 +172,7 @@ class MediaPlane:
                     "tune": "zerolatency",
                     "preset": MEDIA_H264_PRESET,
                     "profile": "baseline",  # avc1.42e0 — universal hardware decode
-                    "crf": MEDIA_H264_CRF,
+                    "crf": str(self._abr.crf(topic)) if self._abr else MEDIA_H264_CRF,
                     "g": str(max(1, round(MEDIA_H264_GOP_SECONDS * fps))),
                     "bf": "0",  # no B-frames → lower latency
                     "x264-params": "repeat-headers=1",  # SPS/PPS before every IDR → late joiners decode
@@ -189,6 +193,10 @@ class MediaPlane:
                 if buf:
                     ts = int(pkt.pts) if pkt.pts is not None else int(time.time() * 1_000_000)
                     loop.call_soon_threadsafe(self._q_put, (topic, buf, bool(pkt.is_keyframe), ts))
+            # Sustained clean delivery → recover one quality rung (fresh encoder at the new CRF).
+            if self._abr and self._abr.on_delivered(topic, time.monotonic()):
+                self.encoders.pop(topic, None)
+                self.force_key.add(topic)
         except Exception:
             pass  # an encode hiccup must never disturb other viewers
 
@@ -199,12 +207,22 @@ class MediaPlane:
             try:
                 dropped = self._video_q.get_nowait()
                 self.force_key.add(dropped[0])
+                # A shed means the link can't carry the current bitrate — step the ladder down
+                # (the fresh encoder at higher CRF starts on the forced IDR).
+                if self._abr and self._abr.on_shed(dropped[0], time.monotonic()):
+                    self.encoders.pop(dropped[0], None)
             except asyncio.QueueEmpty:
                 pass
         self._video_q.put_nowait(item)
 
     async def run_fanout(self) -> None:
         # WebCodecs chunk wire: [u8 flags(bit0=key)][u64 ts_us BE][u16 topic_len BE][topic][NAL]
+        # Per-viewer sends are non-blocking (one in-flight task each): a slow viewer gets frames
+        # SKIPPED — never queued (bufferbloat) and never a stall for other viewers. Each skip is
+        # the ABR down-signal (the link can't carry this bitrate); a viewer that finishes draining
+        # after skips gets a forced IDR to rejoin the GOP. Eviction only on a dead socket.
+        inflight: dict[WebSocket, asyncio.Task] = {}
+        stalled: set[WebSocket] = set()
         while True:
             topic, buf, is_key, ts_us = await self._video_q.get()
             subs = self.webcodecs_subs.get(topic) or set()
@@ -216,13 +234,28 @@ class MediaPlane:
             frame = head + tb + buf
             if wt_wants and self.wt_sink is not None:
                 self.wt_sink(frame)
-            for ws in list(subs or ()):
-                try:
-                    # A viewer that can't take a frame within a second is wedged (dead link,
-                    # frozen tab) — drop it rather than stall every other viewer behind it.
-                    await asyncio.wait_for(ws.send_bytes(frame), timeout=1.0)
-                except Exception:
-                    subs.discard(ws)
+            for ws in list(subs):
+                prev = inflight.get(ws)
+                if prev is not None:
+                    if not prev.done():
+                        stalled.add(ws)  # still draining the last chunk — shed this one
+                        if self._abr and self._abr.on_shed(topic, time.monotonic()):
+                            self.encoders.pop(topic, None)  # rebuild at the lower rung
+                        continue
+                    inflight.pop(ws, None)
+                    if prev.exception() is not None:
+                        subs.discard(ws)
+                        stalled.discard(ws)
+                        continue
+                    if ws in stalled:
+                        stalled.discard(ws)
+                        self.force_key.add(topic)  # rejoin mid-GOP → needs an IDR
+                inflight[ws] = asyncio.create_task(ws.send_bytes(frame))
+            # Entries for viewers that unsubscribed drop out on their next completed send; cap
+            # the map against pathological churn.
+            if len(inflight) > 4 * (len(subs) + 1):
+                for ws in [w for w, t in inflight.items() if t.done()]:
+                    inflight.pop(ws, None)
 
     def _add_track(self, topic: str, track: CameraVideoTrack) -> None:
         self.webrtc_tracks.setdefault(topic, set()).add(track)
