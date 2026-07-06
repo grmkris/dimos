@@ -15,7 +15,7 @@ import os
 
 from dimos.utils.logging_config import setup_logger
 
-from .bus import Bus, Sample
+from .bus import Bus, ConflatedIngest, Sample
 
 logger = setup_logger()
 
@@ -32,24 +32,24 @@ except Exception:  # pragma: no cover - optional native dep
 JPEG_ON = os.environ.get("IMAGE_JPEG", "1") == "1"
 JPEG_QUALITY = int(os.environ.get("IMAGE_JPEG_QUALITY", "75"))
 
-# raw encodings we can hand to TurboJPEG directly: encoding → (channels, TJPF pixel format)
-_PIXFMT = {
-    "rgb8": (3, lambda: TJPF_RGB),
-    "bgr8": (3, lambda: TJPF_BGR),
-    "mono8": (1, lambda: TJPF_GRAY),
-    "8uc1": (1, lambda: TJPF_GRAY),
-}
-
 
 class ImagePlane:
     def __init__(self, bus: Bus) -> None:
         self.bus = bus
-        self._latest: dict[str, bytes] = {}  # topic → newest raw payload (conflate = overwrite)
-        self._wake = asyncio.Event()
+        self._in = ConflatedIngest()  # freshest-wins: a slow encoder skips frames, never adds lag
         self._exec = ThreadPoolExecutor(max_workers=1)  # serialise: one encode at a time
+        self._failed: set[str] = set()  # topics already warned about (log once, not per frame)
         self.enabled = HAS_TURBOJPEG and JPEG_ON
         if self.enabled:
             self._tj = TurboJPEG()  # one instance — construction is not free
+            # encoding → (channels, TJPF pixel format); defined here so a TurboJPEG-less build
+            # never touches the TJPF_* names.
+            self._pixfmt = {
+                "rgb8": (3, TJPF_RGB),
+                "bgr8": (3, TJPF_BGR),
+                "mono8": (1, TJPF_GRAY),
+                "8uc1": (1, TJPF_GRAY),
+            }
             bus.subscribe(self._on_sample)
             logger.info("image plane on", quality=JPEG_QUALITY)
         elif JPEG_ON:
@@ -61,31 +61,31 @@ class ImagePlane:
             return
         if s.topic.endswith("_jpeg"):
             return  # feedback guard — never transcode a derived image
-        self._latest[s.topic] = s.payload  # freshest-wins: overwrite, never queue
-        self._wake.set()
+        self._in.put(s.topic, s.payload)
 
     async def run(self) -> None:
         loop = asyncio.get_running_loop()
         while True:
-            await self._wake.wait()
-            self._wake.clear()
-            while self._latest:
-                topic, payload = self._latest.popitem()
-                await loop.run_in_executor(self._exec, self._process, topic, payload)
+            topic, payload = await self._in.get()
+            await loop.run_in_executor(self._exec, self._process, topic, payload)
 
     def _process(self, topic: str, payload: bytes) -> None:
         """Executor thread: struct-decode, JPEG the pixels, re-emit with the source header intact."""
         try:
             msg = LCMImage.lcm_decode(payload)
-            fmt = _PIXFMT.get((msg.encoding or "").lower())
+            fmt = self._pixfmt.get((msg.encoding or "").lower())
             if fmt is None:
                 return  # already jpeg, or an encoding we don't transcode (depth/16-bit)
             ch, pixfmt = fmt
+            h, w = int(msg.height), int(msg.width)
             arr = np.frombuffer(msg.data, dtype=np.uint8)
-            shape = (msg.height, msg.width) if ch == 1 else (msg.height, msg.width, ch)
+            if msg.step and msg.step > w * ch:  # row-padded stride → slice the padding off
+                arr = arr.reshape(h, int(msg.step))[:, : w * ch]
+            shape = (h, w) if ch == 1 else (h, w, ch)
             kw = {"jpeg_subsample": TJSAMP_GRAY} if ch == 1 else {}  # gray needs its own subsampling
             jpeg = self._tj.encode(
-                arr.reshape(shape), quality=JPEG_QUALITY, pixel_format=pixfmt(), **kw
+                np.ascontiguousarray(arr.reshape(shape)), quality=JPEG_QUALITY,
+                pixel_format=pixfmt, **kw
             )
             # Reuse the decoded struct: keep header (ts + frame_id → latency/seq continuity), swap data.
             msg.encoding = "jpeg"
@@ -93,6 +93,12 @@ class ImagePlane:
             msg.data = jpeg
             msg.data_length = len(jpeg)
             out = msg.lcm_encode()
-        except Exception:
-            return  # a transcode hiccup must never disturb the source topic
+        except Exception as e:
+            # A transcode hiccup must never disturb the source topic — but say so once, or a
+            # malformed camera silently never gets its _jpeg sibling.
+            if topic not in self._failed:
+                self._failed.add(topic)
+                logger.warning("image transcode failed — topic stays raw", topic=topic, error=str(e))
+            return
+        self._failed.discard(topic)
         self.bus.republish(topic + "_jpeg", "sensor_msgs.Image", out)

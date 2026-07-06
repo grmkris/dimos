@@ -32,6 +32,28 @@ class Sample:
 
 Consumer = Callable[[Sample], None]
 
+
+class ConflatedIngest:
+    """Latest-per-topic ingest for the transcode planes (media/image/cloud): `put` overwrites, so a
+    slow worker lowers output fps but never accumulates stale frames — a FIFO here is the classic
+    lag bug (a queue quietly holding seconds of backlog). Single-threaded on the loop (bus consumers
+    run there); `get` serves topics oldest-key-first so one camera can't starve another."""
+
+    def __init__(self) -> None:
+        self._latest: dict[str, bytes] = {}
+        self._wake = asyncio.Event()
+
+    def put(self, topic: str, payload: bytes) -> None:
+        self._latest[topic] = payload  # conflate: newest frame wins
+        self._wake.set()
+
+    async def get(self) -> tuple[str, bytes]:
+        while not self._latest:
+            self._wake.clear()
+            await self._wake.wait()
+        topic = next(iter(self._latest))  # insertion order → round-robin-ish across topics
+        return topic, self._latest.pop(topic)
+
 # Last-value cache: one frame per topic, so a late-joining client is handed the most recent
 # sample on subscribe (Foxglove-style durability ≈ DDS TRANSIENT_LOCAL, without publisher
 # declarations). Frames above this cap are not cached — a firehose topic must not pin tens of MB.

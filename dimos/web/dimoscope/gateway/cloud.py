@@ -21,7 +21,7 @@ import struct
 
 from dimos.utils.logging_config import setup_logger
 
-from .bus import Bus, Sample
+from .bus import Bus, ConflatedIngest, Sample
 
 logger = setup_logger()
 
@@ -62,7 +62,7 @@ class CloudPlane:
     def __init__(self, bus: Bus) -> None:
         self.bus = bus
         self._loop: asyncio.AbstractEventLoop | None = None
-        self._in_q: asyncio.Queue = asyncio.Queue(maxsize=64)  # (topic, payload) → transcode worker
+        self._in = ConflatedIngest()  # freshest-wins: a slow encoder skips clouds, never adds lag
         self._exec = ThreadPoolExecutor(max_workers=1)  # serialise: one open3d/Draco op at a time
         self.enabled = HAS_CLOUD and (DS_ON or DRACO_ON)
         if self.enabled:
@@ -83,15 +83,12 @@ class CloudPlane:
             return
         if s.topic.endswith("_ds") or s.topic.endswith("_draco"):
             return  # feedback guard — never transcode a derived cloud
-        try:
-            self._in_q.put_nowait((s.topic, s.payload))
-        except asyncio.QueueFull:
-            pass  # geometry is freshest-wins; drop under backpressure
+        self._in.put(s.topic, s.payload)
 
     async def run(self) -> None:
         self._loop = asyncio.get_running_loop()
         while True:
-            topic, payload = await self._in_q.get()
+            topic, payload = await self._in.get()
             await self._loop.run_in_executor(self._exec, self._process, topic, payload)
 
     def _process(self, topic: str, payload: bytes) -> None:

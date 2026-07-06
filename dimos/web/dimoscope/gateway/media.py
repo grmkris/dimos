@@ -17,7 +17,7 @@ import time
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from .bus import Bus, Sample
+from .bus import Bus, ConflatedIngest, Sample
 
 # WebRTC (optional): re-encode the camera Image as a video track via aiortc.
 try:
@@ -61,13 +61,11 @@ class MediaPlane:
         self.webcodecs_subs: dict[str, set] = {}
         self.encoders: dict[str, object] = {}
         self.force_key: set[str] = set()
-        # Freshest-wins ingest: latest payload per topic, overwritten on arrival. A FIFO here is the
-        # classic lag bug — when the encoder runs slower than the camera, a queue holds seconds of
-        # stale frames; overwriting means a slow encoder lowers fps, never raises latency.
-        self._latest: dict[str, bytes] = {}
-        self._wake = asyncio.Event()
+        self._in = ConflatedIngest()  # freshest-wins: a slow encoder lowers fps, never adds lag
         self._arrivals: dict[str, deque] = {}  # topic → recent arrival times (measures real fps)
-        self._video_q: asyncio.Queue = asyncio.Queue()  # (topic, nal, is_key, ts_us) → fanout
+        # Encoded NAL → fanout. Bounded for the same reason ingest conflates: a slow viewer must
+        # shed frames, not grow a backlog every viewer then waits behind.
+        self._video_q: asyncio.Queue = asyncio.Queue(maxsize=64)
         self._exec = ThreadPoolExecutor(
             max_workers=1
         )  # serialise encode → encoders stay single-thread
@@ -82,28 +80,23 @@ class MediaPlane:
         if not (trs or wc):
             return
         self._arrivals.setdefault(s.topic, deque(maxlen=8)).append(time.monotonic())
-        self._latest[s.topic] = s.payload  # conflate: newest frame wins
-        self._wake.set()
+        self._in.put(s.topic, s.payload)
 
-    def _measured_fps(self, topic: str) -> int:
-        """Real camera rate from recent inter-arrival times; 15 until enough samples. Clamped [5, 60]."""
+    def _measured_fps(self, topic: str) -> int | None:
+        """Real camera rate from recent inter-arrival times, clamped [5, 60]; None until enough
+        samples (the encoder waits — locking in a guessed rate would mistune rate control and the
+        IDR cadence for the whole session)."""
         t = self._arrivals.get(topic)
-        if not t or len(t) < 5:
-            return 15
-        span = t[-1] - t[0]
-        if span <= 0:
-            return 15
-        return max(5, min(60, round((len(t) - 1) / span)))
+        if not t or len(t) < 5 or t[-1] <= t[0]:
+            return None
+        return max(5, min(60, round((len(t) - 1) / (t[-1] - t[0]))))
 
     # background tasks (started in app.py's lifespan)
     async def run_encoder(self) -> None:
         loop = asyncio.get_running_loop()
         while True:
-            await self._wake.wait()
-            self._wake.clear()
-            while self._latest:
-                topic, payload = self._latest.popitem()
-                await loop.run_in_executor(self._exec, self._process, topic, payload, loop)
+            topic, payload = await self._in.get()
+            await loop.run_in_executor(self._exec, self._process, topic, payload, loop)
 
     def _process(self, topic: str, payload: bytes, loop) -> None:
         """Executor thread: decode the Image once, feed WebRTC tracks + the WebCodecs encoder."""
@@ -123,8 +116,14 @@ class MediaPlane:
             data = img.data
             h, w = int(data.shape[0]), int(data.shape[1])
             enc = self.encoders.get(topic)
+            if enc is not None and (enc.width, enc.height) != (w, h):
+                self.encoders.pop(topic, None)  # resolution changed → stale context would raise
+                self.force_key.add(topic)  # viewers must resync on an IDR at the new size
+                enc = None
             if enc is None:
                 fps = self._measured_fps(topic)
+                if fps is None:
+                    return  # a few frames of warmup — measure before locking in rate control
                 enc = av.CodecContext.create("libx264", "w")
                 enc.width, enc.height, enc.pix_fmt = w, h, "yuv420p"
                 enc.framerate = Fraction(
@@ -157,10 +156,21 @@ class MediaPlane:
                 if buf:
                     ts = int(pkt.pts) if pkt.pts is not None else int(time.time() * 1_000_000)
                     loop.call_soon_threadsafe(
-                        self._video_q.put_nowait, (topic, buf, bool(pkt.is_keyframe), ts)
+                        self._q_put, (topic, buf, bool(pkt.is_keyframe), ts)
                     )
         except Exception:
             pass  # an encode hiccup must never disturb other viewers
+
+    def _q_put(self, item: tuple) -> None:
+        """Loop thread: enqueue an encoded chunk, shedding the oldest when full. A dropped delta
+        breaks that topic's GOP for viewers, so force an IDR to resync within a frame or two."""
+        if self._video_q.full():
+            try:
+                dropped = self._video_q.get_nowait()
+                self.force_key.add(dropped[0])
+            except asyncio.QueueEmpty:
+                pass
+        self._video_q.put_nowait(item)
 
     async def run_fanout(self) -> None:
         # WebCodecs chunk wire: [u8 flags(bit0=key)][u64 ts_us BE][u16 topic_len BE][topic][NAL]
@@ -174,7 +184,9 @@ class MediaPlane:
             frame = head + tb + buf
             for ws in list(subs):
                 try:
-                    await ws.send_bytes(frame)
+                    # A viewer that can't take a frame within a second is wedged (dead link,
+                    # frozen tab) — drop it rather than stall every other viewer behind it.
+                    await asyncio.wait_for(ws.send_bytes(frame), timeout=1.0)
                 except Exception:
                     subs.discard(ws)
 
