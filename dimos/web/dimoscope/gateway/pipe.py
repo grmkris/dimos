@@ -186,7 +186,14 @@ class _Conn:
         egress = self.plane.egress
         op = m.get("op")
         if op == "subs":  # the sidecar's sub-union across all its sessions
+            old = self.subs
             self.subs = set(m.get("topics") or [])
+            # Durability parity with /ws (data.py _replay_last): a topic newly covered by the
+            # union gets the bus LVC frame replayed down the pipe — the sidecar caches it and
+            # replays to its sessions, so late joiners see quiet topics immediately.
+            for topic, s in self.plane.bus.last.items():
+                if wants(self.subs, topic) and not wants(old, topic):
+                    self.send_data(s.lc02)
         elif op == "teleop":
             self.sids.add(m["sid"])
             egress.teleop(

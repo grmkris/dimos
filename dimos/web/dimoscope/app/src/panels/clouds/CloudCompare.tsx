@@ -269,7 +269,7 @@ export function CloudCompare() {
     : dracoStatus === "unavailable"
     ? "draco3d not installed"
     : dracoStatus === "idle"
-    ? "decoding…"
+    ? "waiting for a frame…"
     : undefined;
 
   return (

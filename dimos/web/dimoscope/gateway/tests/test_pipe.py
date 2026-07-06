@@ -117,12 +117,13 @@ def test_sub_union_filters_data():
     async def run():
         async with Harness() as h:
             await h.read_json()  # hello
-            h.publish("/pose", "geometry_msgs.Pose", b"pre-sub")  # no subs announced yet
+            pre = h.publish("/pose", "geometry_msgs.Pose", b"pre-sub")  # no subs announced yet
             kind, body = await h.read_frame()  # only the new-topic push, no DATA
             assert (kind, json.loads(body)["op"]) == (KIND_JSON, "topic")
 
             h.send_json({"op": "subs", "topics": ["/pose"]})
-            await h.settle()
+            kind, body = await h.read_frame()  # newly covered → the pre-sub frame replays (LVC)
+            assert (kind, body) == (KIND_DATA, pre)
             lc02 = h.publish("/pose", "geometry_msgs.Pose", b"wanted")
             h.publish("/other", "x.Y", b"unwanted")  # ∉ union → filtered (its topic push isn't)
             kind, body = await h.read_frame()
@@ -132,6 +133,39 @@ def test_sub_union_filters_data():
             h.publish("/pose", "geometry_msgs.Pose", b"again")
             kind, _ = await h.read_frame()
             assert kind == KIND_DATA  # and nothing from /other queued in between
+
+    asyncio.run(run())
+
+
+def test_subs_growth_replays_lvc():
+    """A topic newly covered by the sub-union gets the bus LVC frame replayed down the pipe
+    (durability parity with /ws): a WT subscriber joining after the publisher went quiet still
+    sees the last frame. Already-covered topics are NOT re-replayed on later announcements."""
+
+    async def run():
+        async with Harness() as h:
+            await h.read_json()  # hello
+            lc02 = h.publish("/map", "nav_msgs.OccupancyGrid", b"last-frame")  # → bus.last
+            kind, body = await h.read_frame()  # discovery push only — no subs announced yet
+            assert (kind, json.loads(body)["op"]) == (KIND_JSON, "topic")
+
+            h.send_json({"op": "subs", "topics": ["/map"]})  # newly covered → LVC replay
+            kind, body = await h.read_frame()
+            assert (kind, body) == (KIND_DATA, lc02)
+
+            h.send_json({"op": "subs", "topics": ["/map"]})  # unchanged → no duplicate replay
+            await h.settle()
+            fresh = h.publish("/map", "nav_msgs.OccupancyGrid", b"fresh")
+            kind, body = await h.read_frame()
+            assert (kind, body) == (KIND_DATA, fresh)  # the next frame is live, not a re-replay
+
+            h.publish("/quiet", "x.Y", b"cached-while-unwanted")  # ∉ union → LVC only
+            kind, body = await h.read_frame()
+            assert (kind, json.loads(body)["op"]) == (KIND_JSON, "topic")
+            h.send_json({"op": "subs", "topics": ["*"]})  # "*" newly covers /quiet, not /map
+            kind, body = await h.read_frame()
+            assert kind == KIND_DATA
+            assert b"cached-while-unwanted" in body  # /quiet replayed; /map (already covered) not
 
     asyncio.run(run())
 
