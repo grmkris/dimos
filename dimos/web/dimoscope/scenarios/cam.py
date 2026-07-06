@@ -25,6 +25,9 @@
 # bulk, so its payload is minimal by design).
 #
 # Run (from dimos/web/dimoscope): DIMOS_TRANSPORT=zenoh uv run python scenarios/cam.py
+import numpy as np
+import reactivex as rx
+
 from dimos.web.dimoscope.scenarios.common import (
     Detection2DArray,
     Image,
@@ -37,10 +40,8 @@ from dimos.web.dimoscope.scenarios.common import (
     env_f,
     env_i,
     make_image,
-    np,
     rpc,
     run_standalone,
-    rx,
     stamp_header,
     time,
 )

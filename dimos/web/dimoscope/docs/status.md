@@ -26,8 +26,9 @@ This page lists the current caveats for dimoscope. Measured behavior and runbook
   them as described in `webapp-guide.md`.
 - The SDK intentionally does not fully match the upstream web API proposal yet. Remaining convergence:
   `Dimos.connect(...)`, injectable decode, QoS naming, `m.stream`, and topic allow/deny lists.
-- CI for this tree is still manual. The intended job is `deno task check`, `deno task test`, and
-  `uv run pytest dimos/web/dimoscope/gateway/tests -q`.
+- Repo CI covers the Python and Rust here (strict mypy, the gateway pytest suite, rustfmt/clippy/tests
+  on the sidecar) but not the TypeScript. `deno task check` and `deno task test` are still manual; the
+  intended job runs both plus the app build.
 - Multi-robot namespacing is not designed here. The gateway currently assumes one logical DimOS topic
   namespace.
 

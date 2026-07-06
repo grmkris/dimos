@@ -25,6 +25,9 @@
 # message TYPE, so the topic names don't matter.
 #
 # Run (from dimos/web/dimoscope):  DIMOS_TRANSPORT=zenoh uv run python scenarios/nav.py
+import numpy as np
+import reactivex as rx
+
 from dimos.web.dimoscope.scenarios.common import (
     IDENT,
     Module,
@@ -39,10 +42,8 @@ from dimos.web.dimoscope.scenarios.common import (
     env_f,
     env_i,
     math,
-    np,
     rpc,
     run_standalone,
-    rx,
     time,
 )
 

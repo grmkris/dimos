@@ -23,12 +23,11 @@
 # seq) → exact drop/gap detection in the bench.
 #
 # Launch (from dimos/web/dimoscope): DIMOS_TRANSPORT=zenoh uv run python scenarios/nav.py
-import math
+import math as math
 import os
-import time
+import time as time
 
 import numpy as np
-import reactivex as rx
 
 from dimos.core.core import rpc as rpc
 from dimos.core.module import Module as Module, ModuleConfig as ModuleConfig
@@ -47,45 +46,6 @@ from dimos.msgs.std_msgs.Header import Header as Header
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory as JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint as TrajectoryPoint
 from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray as Detection2DArray
-
-__all__ = [
-    "IDENT",
-    # helpers
-    "TRANSPORT",
-    "Detection2DArray",
-    "Header",
-    "Image",
-    "ImageFormat",
-    "Imu",
-    "JointState",
-    "JointTrajectory",
-    # dimos plumbing re-exported so scenario files import from one place
-    "Module",
-    "ModuleConfig",
-    "OccupancyGrid",
-    "Out",
-    "Path",
-    "PointCloud2",
-    # message types
-    "Pose",
-    "PoseStamped",
-    "Quaternion",
-    "Seq",
-    "TrajectoryPoint",
-    "Vector3",
-    "env_f",
-    "env_i",
-    "make_image",
-    "math",
-    "mk",
-    "np",
-    "rpc",
-    "run_standalone",
-    "rx",
-    "stamp_header",
-    "time",
-    "tn",
-]
 
 TRANSPORT = os.environ.get("DIMOS_TRANSPORT", "lcm")
 IDENT = Quaternion.from_euler(Vector3(0.0, 0.0, 0.0))

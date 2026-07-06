@@ -49,7 +49,9 @@ from .egress import SafetyEgress
 from .image import ImagePlane
 from .media import MediaPlane
 from .pipe import PipePlane
-from .transports import PollPlane, RtcSignalRelay, SsePlane
+from .transports.poll import PollPlane
+from .transports.sse import SsePlane
+from .transports.webrtc import RtcSignalRelay
 
 logger = setup_logger()
 

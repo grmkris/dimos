@@ -25,6 +25,8 @@
 # /arm/trajectory by design. Wrist Imu (not WrenchStamped, which lacks an LCM codec) is the 500 Hz stream.
 #
 # Run (from dimos/web/dimoscope): DIMOS_TRANSPORT=zenoh uv run python scenarios/arm.py
+import reactivex as rx
+
 from dimos.web.dimoscope.scenarios.common import (
     IDENT,
     Imu,
@@ -42,7 +44,6 @@ from dimos.web.dimoscope.scenarios.common import (
     math,
     rpc,
     run_standalone,
-    rx,
     time,
 )
 

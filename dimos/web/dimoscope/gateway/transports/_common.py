@@ -13,8 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Shared helpers for the bench delivery transports: the [f64 gateway-send-ms][LC02] framing (the same
-# frame the WS data plane sends, so every path decodes through the browser's identical frameToSample)
+# The bench delivery transports: SSE (sse.py) and HTTP long-poll (poll.py) tap the shared Bus and
+# re-emit the same [f64 gateway-send-ms][LC02] frames as the default WS data plane, so the browser
+# decodes every path through the identical frameToSample. Both are read-only benchmark baselines;
+# WebTransport AND WebRTC live in the native sidecar (gateway/wt-sidecar), fed by gateway/pipe.py —
+# /rtc (webrtc.py) is only the SDP signaling relay. This module holds the shared framing helpers
 # plus subscription matching + the ?topics= query parse.
 from __future__ import annotations
 
