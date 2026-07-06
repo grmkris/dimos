@@ -478,7 +478,9 @@ export function useImageTopic(topic: string | null, opts?: { maxFps?: number }) 
 /** Forced media mode (the topbar toggle). "auto" = best available, falling back to jpeg. */
 export type MediaMode = "auto" | "jpeg" | "webrtc" | "webcodecs";
 const MODE_PREFER: Record<MediaMode, MediaKind[]> = {
-  auto: ["webrtc", "webcodecs", "jpeg"], // proven default first; webcodecs/jpeg as fallback
+  // webcodecs first: measured on the go2 replay it holds source fps at ~16 ms age, while the
+  // aiortc webrtc path runs ~2 fps lower with a jitter-buffer floor of tens of ms.
+  auto: ["webcodecs", "webrtc", "jpeg"],
   jpeg: ["jpeg"],
   webrtc: ["webrtc", "jpeg"],
   webcodecs: ["webcodecs", "jpeg"],

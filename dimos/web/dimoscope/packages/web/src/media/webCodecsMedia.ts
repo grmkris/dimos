@@ -36,34 +36,53 @@ export const createWebCodecsMedia = (deps: WebCodecsMediaDeps): MediaChannel => 
   let statusCb: ((s: Status) => void) | undefined;
   let latencyCb: ((id: string, ms: number) => void) | undefined;
 
-  function connect(): Promise<void> {
+  async function connect(): Promise<void> {
     if (ws && ws.readyState <= WebSocket.OPEN) return Promise.resolve();
+    // Honest support gate: `"VideoDecoder" in globalThis` is presence, not H.264 capability — a
+    // failed configure() later would mean a black canvas with no fallback. Reject here instead, so
+    // useVideo's connect-failure path drops to the jpeg floor.
+    const support = await VideoDecoder.isConfigSupported({ codec: "avc1.42E01F" })
+      .catch(() => null);
+    if (!support?.supported) throw new Error("h264 webcodecs unsupported in this browser");
     return new Promise((resolve, reject) => {
       statusCb?.("connecting");
       const sock = new WebSocket(gatewayUrl);
       sock.binaryType = "arraybuffer";
       ws = sock;
-      sock.onopen = () => {
-        statusCb?.("open");
-        for (const t of wanted) send({ op: "webcodecs-start", topic: t });
-        resolve();
+      // Resolve on the gateway hello, not on open: the hello advertises which media kinds this
+      // gateway actually serves (a PyAV-less gateway accepts the WS but would never send video).
+      sock.onopen = () => statusCb?.("open");
+      sock.onmessage = (e) => {
+        const helloMedia = onMessage(e);
+        if (helloMedia === undefined) return; // not a hello
+        if (helloMedia === null || helloMedia.includes("webcodecs")) {
+          for (const t of wanted) send({ op: "webcodecs-start", topic: t });
+          resolve();
+        } else {
+          sock.close();
+          reject(new Error("gateway media plane lacks webcodecs"));
+        }
       };
-      sock.onmessage = (e) => onMessage(e);
       sock.onerror = () => reject(new Error("webcodecs ws error"));
-      sock.onclose = () => statusCb?.("closed");
+      sock.onclose = () => {
+        statusCb?.("closed");
+        reject(new Error("webcodecs ws closed")); // no-op if already resolved
+      };
     });
   }
 
-  function onMessage(e: MessageEvent): void {
+  /** Returns the hello's media list (null = hello without one, for older gateways), undefined otherwise. */
+  function onMessage(e: MessageEvent): (string[] | null) | undefined {
     if (typeof e.data === "string") {
-      let m: { op?: string; topic?: string; codec?: string };
+      let m: { op?: string; topic?: string; codec?: string; media?: string[] };
       try {
         m = JSON.parse(e.data);
       } catch {
         return;
       }
+      if (m.op === "hello") return Array.isArray(m.media) ? m.media : null;
       if (m.op === "video-config" && m.topic) configure(m.topic, m.codec);
-      return; // hello / others: ignore (no data-plane on this socket)
+      return; // others: ignore (no data-plane on this socket)
     }
     const buf = e.data as ArrayBuffer;
     if (buf.byteLength < 11) return;

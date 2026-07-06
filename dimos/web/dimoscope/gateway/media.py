@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 import json
 import struct
@@ -60,7 +61,12 @@ class MediaPlane:
         self.webcodecs_subs: dict[str, set] = {}
         self.encoders: dict[str, object] = {}
         self.force_key: set[str] = set()
-        self._in_q: asyncio.Queue = asyncio.Queue(maxsize=256)  # (topic, payload) → encode worker
+        # Freshest-wins ingest: latest payload per topic, overwritten on arrival. A FIFO here is the
+        # classic lag bug — when the encoder runs slower than the camera, a queue holds seconds of
+        # stale frames; overwriting means a slow encoder lowers fps, never raises latency.
+        self._latest: dict[str, bytes] = {}
+        self._wake = asyncio.Event()
+        self._arrivals: dict[str, deque] = {}  # topic → recent arrival times (measures real fps)
         self._video_q: asyncio.Queue = asyncio.Queue()  # (topic, nal, is_key, ts_us) → fanout
         self._exec = ThreadPoolExecutor(
             max_workers=1
@@ -75,17 +81,29 @@ class MediaPlane:
         wc = self.webcodecs_subs.get(s.topic) if HAS_WEBCODECS else None
         if not (trs or wc):
             return
-        try:
-            self._in_q.put_nowait((s.topic, s.payload))
-        except asyncio.QueueFull:
-            pass  # camera is freshest-wins; drop under backpressure
+        self._arrivals.setdefault(s.topic, deque(maxlen=8)).append(time.monotonic())
+        self._latest[s.topic] = s.payload  # conflate: newest frame wins
+        self._wake.set()
+
+    def _measured_fps(self, topic: str) -> int:
+        """Real camera rate from recent inter-arrival times; 15 until enough samples. Clamped [5, 60]."""
+        t = self._arrivals.get(topic)
+        if not t or len(t) < 5:
+            return 15
+        span = t[-1] - t[0]
+        if span <= 0:
+            return 15
+        return max(5, min(60, round((len(t) - 1) / span)))
 
     # background tasks (started in app.py's lifespan)
     async def run_encoder(self) -> None:
         loop = asyncio.get_running_loop()
         while True:
-            topic, payload = await self._in_q.get()
-            await loop.run_in_executor(self._exec, self._process, topic, payload, loop)
+            await self._wake.wait()
+            self._wake.clear()
+            while self._latest:
+                topic, payload = self._latest.popitem()
+                await loop.run_in_executor(self._exec, self._process, topic, payload, loop)
 
     def _process(self, topic: str, payload: bytes, loop) -> None:
         """Executor thread: decode the Image once, feed WebRTC tracks + the WebCodecs encoder."""
@@ -106,10 +124,11 @@ class MediaPlane:
             h, w = int(data.shape[0]), int(data.shape[1])
             enc = self.encoders.get(topic)
             if enc is None:
+                fps = self._measured_fps(topic)
                 enc = av.CodecContext.create("libx264", "w")
                 enc.width, enc.height, enc.pix_fmt = w, h, "yuv420p"
                 enc.framerate = Fraction(
-                    30, 1
+                    fps, 1
                 )  # real fps → correct rate control (else blocky garbage)
                 enc.time_base = Fraction(1, 1_000_000)  # pts in µs
                 enc.options = {
@@ -117,7 +136,7 @@ class MediaPlane:
                     "preset": "veryfast",
                     "profile": "baseline",  # avc1.42e0 — universal hardware decode
                     "crf": "23",
-                    "g": "30",  # IDR cadence
+                    "g": str(2 * fps),  # IDR cadence ~2 s at the real rate
                     "bf": "0",  # no B-frames → lower latency
                     "x264-params": "repeat-headers=1",  # SPS/PPS before every IDR → late joiners decode
                 }

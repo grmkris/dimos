@@ -45,6 +45,7 @@ from .bus import Bus
 from .cloud import CloudPlane
 from .data import DataPlane
 from .egress import SafetyEgress
+from .image import ImagePlane
 from .media import MediaPlane
 from .pipe import PipePlane
 from .transports import PollPlane, RtcSignalRelay, SsePlane
@@ -76,6 +77,7 @@ def build_app() -> FastAPI:
     data = DataPlane(bus, egress)
     media = MediaPlane(bus)
     cloud = CloudPlane(bus)  # PointCloud2 → downsampled/Draco variants republished on the bus
+    image = ImagePlane(bus)  # raw camera Image → <topic>_jpeg republished on the bus
     sse = SsePlane(bus)
     poll = PollPlane(bus)
     pipe = PipePlane(bus, egress)
@@ -93,6 +95,8 @@ def build_app() -> FastAPI:
         ]
         if cloud.enabled:
             tasks.append(asyncio.create_task(cloud.run()))
+        if image.enabled:
+            tasks.append(asyncio.create_task(image.run()))
         logger.info("dimoscope up", url=f"http://localhost:{PORT}", transports="all")
         try:
             yield

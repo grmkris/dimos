@@ -4,9 +4,12 @@ import type { MediaMode, TopicInfo } from "@dimos/react";
 import { useTopics, useVideo } from "../dimos";
 
 function pickImage(topics: TopicInfo[]): string | null {
+  // Raw names only — the jpeg media channel swaps to a `<topic>_jpeg` transcode itself when the
+  // gateway publishes one, and the stream channels (webcodecs/webrtc) must encode from the source.
   const prefer = ["/color_image", "/camera/image_raw", "/image", "/cam/rgb"];
   for (const p of prefer) if (topics.find((t) => t.topic === p)) return p;
-  return topics.find((t) => t.type === "sensor_msgs.Image")?.topic ?? null;
+  const raw = topics.find((t) => t.type === "sensor_msgs.Image" && !t.topic.endsWith("_jpeg"));
+  return raw?.topic ?? topics.find((t) => t.type === "sensor_msgs.Image")?.topic ?? null;
 }
 
 export function CameraView({ mode, primary }: { mode?: MediaMode; primary?: boolean }) {

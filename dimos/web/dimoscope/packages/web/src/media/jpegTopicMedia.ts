@@ -1,5 +1,7 @@
 // jpeg is the universal media floor — the Image-topic path repackaged as a MediaChannel so the app
-// consumes video uniformly; needs no media gateway; works on all browsers/transports.
+// consumes video uniformly; needs no media gateway; works on all browsers/transports. When the
+// gateway's image plane republishes a `<topic>_jpeg` transcode (~100 KB vs ~2.8 MB raw), this
+// channel subscribes that sibling instead — the caller keeps addressing the raw topic name.
 import type { MediaCaps, MediaChannel, Status, Subscription, VideoMeta } from "../types.ts";
 import type { DimosClient } from "../client.ts";
 
@@ -7,7 +9,7 @@ export interface JpegTopicMediaDeps {
   client: DimosClient; // for the jpeg-topic floor (subscribes via client.topic)
 }
 
-// sensor_msgs.Image → ImageBitmap: jpeg → native decode; raw rgb8/bgr8/mono8/rgba8/bgra8 → RGBA.
+// sensor_msgs.Image → VideoFrame/ImageBitmap: jpeg → native decode; raw rgb8/bgr8/mono8/rgba8/bgra8.
 interface ImageMsg {
   width: number;
   height: number;
@@ -46,12 +48,43 @@ function rawToRGBA(img: ImageMsg): ImageData | null {
   return new ImageData(out, w, h);
 }
 
-/** Decode a sensor_msgs.Image (jpeg or raw) to an ImageBitmap. Rejects on unsupported/empty. */
-function decodeImageToBitmap(img: ImageMsg): Promise<ImageBitmap> {
+/** rgb8/bgr8 → VideoFrame via one flat 3→4-byte stride copy (no per-pixel swizzle branch, no async
+ *  bitmap hop — VideoPixelFormat has no packed-24-bit format, but BGRX/RGBX map both encodings). */
+function rawToVideoFrame(img: ImageMsg): VideoFrame | null {
+  const { width: w, height: h, data } = img;
+  const enc = (img.encoding || "").toLowerCase();
+  if (!("VideoFrame" in globalThis) || !w || !h || !data?.length) return null;
+  if (enc !== "rgb8" && enc !== "bgr8") return null;
+  const step = img.step && img.step >= w * 3 ? img.step : w * 3;
+  const out = new Uint8Array(w * h * 4);
+  for (let y = 0, di = 0; y < h; y++) {
+    for (let si = y * step, xe = si + w * 3; si < xe; si += 3, di += 4) {
+      out[di] = data[si];
+      out[di + 1] = data[si + 1];
+      out[di + 2] = data[si + 2];
+      out[di + 3] = 255;
+    }
+  }
+  try {
+    return new VideoFrame(out, {
+      format: enc === "bgr8" ? "BGRX" : "RGBX",
+      codedWidth: w,
+      codedHeight: h,
+      timestamp: performance.now() * 1000, // required; µs
+    });
+  } catch {
+    return null; // fall through to the ImageData path
+  }
+}
+
+/** Decode a sensor_msgs.Image (jpeg or raw) to a VideoFrame/ImageBitmap. Rejects on unsupported/empty. */
+function decodeImage(img: ImageMsg): Promise<VideoFrame | ImageBitmap> {
   const enc = (img.encoding || "").toLowerCase();
   if (enc === "jpeg" || enc === "jpg") {
     return createImageBitmap(new Blob([img.data as BlobPart], { type: "image/jpeg" }));
   }
+  const vf = rawToVideoFrame(img);
+  if (vf) return Promise.resolve(vf);
   const id = rawToRGBA(img);
   if (!id) return Promise.reject(new Error(`unsupported image encoding: ${img.encoding}`));
   return createImageBitmap(id);
@@ -62,7 +95,7 @@ export const createJpegTopicMedia = (deps: JpegTopicMediaDeps): MediaChannel => 
   const caps: MediaCaps = { output: "frames", codec: "jpeg" };
   const subs = new Map<string, Subscription>();
   const ageEma = new Map<string, number>();
-  let frameCb: ((id: string, f: ImageBitmap, m: VideoMeta) => void) | undefined;
+  let frameCb: ((id: string, f: VideoFrame | ImageBitmap, m: VideoMeta) => void) | undefined;
   let statusCb: ((s: Status) => void) | undefined;
   let latencyCb: ((id: string, ms: number) => void) | undefined;
 
@@ -73,27 +106,52 @@ export const createJpegTopicMedia = (deps: JpegTopicMediaDeps): MediaChannel => 
 
   function subscribe(streamId: string): void {
     if (subs.has(streamId)) return;
-    const sub = client.topic(streamId).subscribeLatest((raw) => {
-      const img = raw.data as ImageMsg;
-      decodeImageToBitmap(img)
-        .then((bmp) => {
+    // Prefer the gateway image plane's `<topic>_jpeg` transcode when discovered — same frames,
+    // ~40× fewer bytes. The caller's id stays the raw topic name.
+    const wire = client.listTopics().some((t) => t.topic === streamId + "_jpeg")
+      ? streamId + "_jpeg"
+      : streamId;
+    // Freshest-wins decode pump: keep only the newest message and never run two decodes at once —
+    // an async decode queue is unbounded latency (and out-of-order frames) the moment decoding is
+    // slower than delivery. A slow machine drops frames; it never falls behind.
+    let pending: { img: ImageMsg; recvTs: number; hopMs?: number } | null = null;
+    let busy = false;
+    const pump = (): void => {
+      if (busy || !pending) return;
+      const { img, recvTs, hopMs } = pending;
+      pending = null;
+      busy = true;
+      decodeImage(img)
+        .then((frame) => {
           if (latencyCb) {
             // Age at draw = now − gateway send stamp (recvTs − transport hop); falls back to
             // decode time alone when the transport carries no hop measurement.
-            const age = Date.now() - raw.meta.recvTs + (raw.meta.latencyMs ?? 0);
+            const age = Date.now() - recvTs + (hopMs ?? 0);
             const prev = ageEma.get(streamId);
             const ema = prev === undefined ? age : prev + 0.3 * (age - prev);
             ageEma.set(streamId, ema);
             latencyCb(streamId, ema);
           }
-          frameCb?.(streamId, bmp, {
+          frameCb?.(streamId, frame, {
             width: img.width,
             height: img.height,
             fps: 0,
             codec: img.encoding,
           });
         })
-        .catch(() => {});
+        .catch(() => {})
+        .finally(() => {
+          busy = false;
+          pump(); // drain whatever arrived while decoding (always the newest)
+        });
+    };
+    const sub = client.topic(wire).subscribeLatest((raw) => {
+      pending = {
+        img: raw.data as ImageMsg,
+        recvTs: raw.meta.recvTs,
+        hopMs: raw.meta.latencyMs,
+      };
+      pump();
     });
     subs.set(streamId, sub);
   }
@@ -118,7 +176,7 @@ export const createJpegTopicMedia = (deps: JpegTopicMediaDeps): MediaChannel => 
     subscribe,
     unsubscribe,
     onStream() {}, // n/a — this channel is "frames"
-    onFrame(cb: (id: string, f: ImageBitmap, m: VideoMeta) => void): void {
+    onFrame(cb: (id: string, f: VideoFrame | ImageBitmap, m: VideoMeta) => void): void {
       frameCb = cb;
     },
     onStatus(cb: (s: Status) => void): void {
