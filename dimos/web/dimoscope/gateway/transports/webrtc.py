@@ -19,7 +19,7 @@ ANSWER_TIMEOUT_S = 10  # host-candidates only, no STUN — gathering is quick; a
 
 
 class RtcSignalRelay:
-    def __init__(self, pipe: "PipePlane") -> None:
+    def __init__(self, pipe: PipePlane) -> None:
         self.pipe = pipe
         self._rsid = itertools.count(1)
         self._pending: dict[int, asyncio.Future] = {}

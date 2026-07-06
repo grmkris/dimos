@@ -12,7 +12,7 @@ import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent.parent))  # dimoscope root → gateway pkg
 
-from gateway.bus import Bus, LVC_MAX_BYTES
+from gateway.bus import LVC_MAX_BYTES, Bus
 from gateway.data import DataPlane, _Client
 from gateway.egress import SafetyEgress
 

@@ -8,7 +8,10 @@
 import { chromium } from "npm:playwright-core@1.49.1";
 
 const URL = Deno.args[0];
-if (!URL) { console.error("usage: bench-headless.ts <url>"); Deno.exit(1); }
+if (!URL) {
+  console.error("usage: bench-headless.ts <url>");
+  Deno.exit(1);
+}
 
 function findPlaywrightChrome(): string | null {
   const home = Deno.env.get("HOME") ?? "";
@@ -16,8 +19,10 @@ function findPlaywrightChrome(): string | null {
     ? `${home}/Library/Caches/ms-playwright`
     : `${home}/.cache/ms-playwright`;
   const leaves = Deno.build.os === "darwin"
-    ? ["chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
-      "chrome-mac/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"]
+    ? [
+      "chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+      "chrome-mac/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+    ]
     : ["chrome-linux/chrome"];
   try {
     const versions = [...Deno.readDirSync(root)]
@@ -26,7 +31,10 @@ function findPlaywrightChrome(): string | null {
     for (const v of versions) {
       for (const leaf of leaves) {
         const p = `${root}/${v}/${leaf}`;
-        try { Deno.statSync(p); return p; } catch { /* try next candidate */ }
+        try {
+          Deno.statSync(p);
+          return p;
+        } catch { /* try next candidate */ }
       }
     }
   } catch { /* no playwright cache */ }
@@ -58,8 +66,10 @@ page.on("pageerror", (e: Error) => console.error("PAGEERR", e.message));
 await page.goto(URL, { waitUntil: "domcontentloaded" });
 
 try {
-  await page.waitForFunction(() => /done\s*✓/.test(document.body.innerText), null,
-    { timeout: 1200000, polling: 2000 });
+  await page.waitForFunction(() => /done\s*✓/.test(document.body.innerText), null, {
+    timeout: 1200000,
+    polling: 2000,
+  });
 } catch {
   console.error("TIMEOUT waiting for done — dumping partial");
 }
@@ -69,10 +79,13 @@ const out = await page.evaluate(() => {
     .find((t) => /clk\s*[+\-]/.test(t))?.match(/clk[^\n]*ms/)?.[0] ?? "";
   const chip = [...document.querySelectorAll(".badge")].map((b) => b.textContent).join(" | ");
   const table = document.querySelector("table.stats");
-  const header = table ? [...table.querySelectorAll("thead th")].map((th) => th.textContent!.trim()) : [];
+  const header = table
+    ? [...table.querySelectorAll("thead th")].map((th) => th.textContent!.trim())
+    : [];
   const rows = table
     ? [...table.querySelectorAll("tbody tr")].map((tr) =>
-      [...tr.querySelectorAll("td")].map((td) => td.textContent!.trim()))
+      [...tr.querySelectorAll("td")].map((td) => td.textContent!.trim())
+    )
     : [];
   return { chip, line, header, rows };
 });
