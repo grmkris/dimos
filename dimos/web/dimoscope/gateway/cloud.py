@@ -92,9 +92,9 @@ class CloudPlane:
         self._loop = asyncio.get_running_loop()
         while True:
             topic, payload = await self._in_q.get()
-            await self._loop.run_in_executor(self._exec, self._process, topic, payload, self._loop)
+            await self._loop.run_in_executor(self._exec, self._process, topic, payload)
 
-    def _process(self, topic: str, payload: bytes, loop) -> None:
+    def _process(self, topic: str, payload: bytes) -> None:
         """Executor thread: decode once, emit the downsampled + Draco variants."""
         try:
             pc = PointCloud2.lcm_decode(payload)
@@ -107,11 +107,11 @@ class CloudPlane:
         ts = getattr(pc, "ts", None)
 
         if DS_ON:
-            self._emit_ds(topic, pts, frame_id, ts, loop)
+            self._emit_ds(topic, pts, frame_id, ts)
         if DRACO_ON:
-            self._emit_draco(topic, pts, frame_id, ts, loop)
+            self._emit_draco(topic, pts, frame_id, ts)
 
-    def _emit_ds(self, topic: str, pts, frame_id: str, ts, loop) -> None:
+    def _emit_ds(self, topic: str, pts, frame_id: str, ts) -> None:
         try:
             if len(pts) > DS_MAX_POINTS:
                 step = -(-len(pts) // DS_MAX_POINTS)  # ceil division → deterministic stride
@@ -122,13 +122,9 @@ class CloudPlane:
             payload = out.lcm_encode(frame_id=frame_id)  # keep frame_id → seq continuity for the bench
         except Exception:
             return
-        ds_topic = topic + "_ds"
-        lc02 = self.bus._make_lc02(f"{ds_topic}#sensor_msgs.PointCloud2", payload)
-        loop.call_soon_threadsafe(
-            self.bus._publish, ds_topic, "sensor_msgs.PointCloud2", lc02, payload
-        )
+        self.bus.republish(topic + "_ds", "sensor_msgs.PointCloud2", payload)
 
-    def _emit_draco(self, topic: str, pts, frame_id: str, ts, loop) -> None:
+    def _emit_draco(self, topic: str, pts, frame_id: str, ts) -> None:
         try:
             draco = DracoPy.encode(
                 pts.astype(np.float32),
@@ -139,6 +135,4 @@ class CloudPlane:
             payload = struct.pack(">IId", _seq_of(frame_id), len(pts), float(ts or 0.0)) + bytes(draco)
         except Exception:
             return
-        dr_topic = topic + "_draco"
-        lc02 = self.bus._make_lc02(f"{dr_topic}#{DRACO_TYPE}", payload)
-        loop.call_soon_threadsafe(self.bus._publish, dr_topic, DRACO_TYPE, lc02, payload)
+        self.bus.republish(topic + "_draco", DRACO_TYPE, payload)

@@ -70,6 +70,17 @@ class Bus:
     def topic_list(self) -> list[dict]:
         return [{"topic": t, "type": ty} for t, ty in self.topics.items()]
 
+    def republish(self, topic: str, typ: str, payload: bytes) -> None:
+        """Publish a derived sample onto the bus (e.g. the cloud plane's transcoded variants) so it
+        flows through discovery, the LVC, and every transport exactly like an ingested frame.
+        Callable from any thread."""
+        lc02 = self._make_lc02(f"{topic}#{typ}", payload)
+        loop = self._loop
+        if loop is not None:
+            loop.call_soon_threadsafe(self._publish, topic, typ, lc02, payload)
+        else:
+            self._publish(topic, typ, lc02, payload)
+
     def _make_lc02(self, channel: str, payload: bytes) -> bytes:
         self._seq = (self._seq + 1) & 0xFFFFFFFF
         return struct.pack(">II", LC02, self._seq) + channel.encode() + b"\x00" + payload
