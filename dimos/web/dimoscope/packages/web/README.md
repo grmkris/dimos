@@ -50,7 +50,7 @@ const dimos = createDimosClient<DimosTopics, DimosCommands>();
 await dimos.connect("ws://localhost:8080");
 
 dimos.subscribe("/nav/pose", (m) => {
-  m.data.position; // geometry_msgs.PoseStamped
+  m.data.pose.position; // geometry_msgs.PoseStamped
 });
 
 const goal = {} as geometry_msgs.PoseStamped;
@@ -68,10 +68,10 @@ await dimos.call("ScopeNav", "navigate_to", goal);
 `@dimos/react` wraps the same client for app code:
 
 ```tsx
-import { DimosProvider, useTopicLatest, useTopicStats } from "@dimos/react";
+import { DimosProvider, useTopic, useTopicStats } from "@dimos/react";
 
 function Pose() {
-  const pose = useTopicLatest("/nav/pose", { maxHz: 5 });
+  const pose = useTopic("/nav/pose", { maxHz: 5 });
   const stats = useTopicStats("/nav/pose");
   return <pre>{JSON.stringify({ pose: pose.data, stats }, null, 2)}</pre>;
 }
@@ -85,12 +85,17 @@ export function App() {
 }
 ```
 
-The reference app's typed binding lives in `app/src/dimos.ts`. For the complete hook walkthrough,
+The reference app's typed binding lives in `app/src/dimos.ts`, where `useTopic("/nav/pose")` infers
+`geometry_msgs.PoseStamped` from the generated topic map. Older names such as `useTopicLatest` remain
+as compatibility aliases, but new code should use the names above. For the complete hook walkthrough,
 copy points, and Vite package aliases, see [`../../app/README.md`](../../app/README.md).
 
 ## What Codegen Reads
 
 - Topics: module-level `PORTS = [(attr, topic, MsgClass), ...]`.
+- Topics, coordinator-wired form: pass `path.py=PREFIX` and every `Out[Msg]` class attribute on the
+  file's `Module` subclasses becomes the topic `PREFIX+attr` (the go2 blueprint's `odom: Out[PoseStamped]`
+  → `/odom`; GO2Load's lanes → `/load/fast` …).
 - Commands: `@rpc` methods on `Module` subclasses.
 - Message types: `MsgClass.msg_name`, imported from `@dimos/msgs`.
 

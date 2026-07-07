@@ -4,8 +4,8 @@ import { type MediaMode, SubscribeBar } from "@dimos/react";
 import {
   useDimosClient,
   useServers,
-  useStatus,
-  useTopicLatest,
+  useConnectionState,
+  useTopic,
   useTopics,
 } from "./dimos";
 import { WorldView } from "./panels/WorldView";
@@ -42,7 +42,7 @@ const TAB_PARAM: Record<Tab, string | null> = {
 const initialTab = (): Tab => TAB_IDS[getParam("tab") ?? ""] ?? (hasBenchParams() ? "streams" : "2d");
 
 function Inspector({ topic }: { topic: string }) {
-  const { data, meta } = useTopicLatest<any>(topic, { maxHz: 4 });
+  const { data, meta } = useTopic<any>(topic, { maxHz: 4 });
   const pretty = JSON.stringify(
     data,
     (
@@ -67,7 +67,7 @@ function Inspector({ topic }: { topic: string }) {
 
 export function App() {
   const topics = useTopics();
-  const status = useStatus();
+  const status = useConnectionState();
   const label = useDimosClient()?.gatewayLabel;
   const { servers, activeId, setActiveId } = useServers();
   const [selected, setSelected] = useState<string | null>(null);

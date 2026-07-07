@@ -36,7 +36,8 @@ flags), gateway + wt-sidecar + `deno task dog:vps` on the company VPS (4 vCPU De
 RTT, netem on the box via `NETEM_CTL=1`). The source was MuJoCo headless/EGL with video at 5 fps and
 lidar at 1 fps. One 15 s cell per row; netem profiles were applied server-side.
 
-Reproduce any row:
+Reproduce any row. `placeholder%2Fvps` is a placeholder, not a literal gateway; replace it with the
+URL-encoded gateway `host:port`.
 
 ```text
 deno run -A scripts/bench-headless.ts "http://localhost:8080/?tab=topics&gw=placeholder%2Fvps&transport=<webtransport|ws|webrtc>&profiles=pose%2Clidar%2Cdense&coex=1&net=clean%2Cwifi-normal%2Cwifi-crowded%2Closs-5&dur=15000&run=1"

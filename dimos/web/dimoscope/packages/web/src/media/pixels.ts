@@ -1,5 +1,5 @@
 // Raw sensor_msgs.Image pixel conversion, shared by the jpeg media channel and the react
-// useImageTopic hook (one implementation — a swizzle fix must not fork between the two paths).
+// useTopicImage hook (one implementation — a swizzle fix must not fork between the two paths).
 export interface RawImageLike {
   width: number;
   height: number;

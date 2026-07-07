@@ -1,9 +1,9 @@
 // WorldView — fuses OccupancyGrid/PointCloud2/LaserScan/Path/PoseStamped into one 2D canvas.
-// scroll=zoom, drag=pan, click=nav-goal. Uses useTopicRef + rAF so it doesn't re-render per message.
+// scroll=zoom, drag=pan, click=nav-goal. Uses useTopicSnapshot + rAF so it doesn't re-render per message.
 // View transform = scale+center held in a ref; responsive via ResizeObserver + devicePixelRatio.
 import { useEffect, useRef, useState } from "react";
 import type { TopicInfo } from "@dimos/react";
-import { useDimosClient, useTopicRef, useTopics, useTopicStats } from "../dimos";
+import { useDimosClient, useTopicSnapshot, useTopics, useTopicStats } from "../dimos";
 import { DRACO_TYPE } from "@dimos/web";
 import { type CloudLike, cloudExtent, cloudToXYZ, drawCloud, synthCloud } from "./clouds/drawCloud";
 import { decodeDracoGeometry } from "./clouds/dracoDecode";
@@ -82,7 +82,7 @@ export function WorldView() {
   const lidarDecoding = useRef(false);
   const pathTopic = pick(topics, "nav_msgs.Path", ["/path"]);
 
-  // on/off gates the subscription — OFF passes null to useTopicRef, which ref-counts down and unsubscribes.
+  // on/off gates the subscription — OFF passes null to useTopicSnapshot, which ref-counts down and unsubscribes.
   const [layers, setLayers] = useState({
     pose: true,
     map: true,
@@ -90,11 +90,11 @@ export function WorldView() {
     scan: true,
     path: true,
   });
-  const odom = useTopicRef<any>(layers.pose ? poseTopic : null);
-  const map = useTopicRef<any>(layers.map ? mapTopic : null);
-  const lidar = useTopicRef<any>(layers.lidar ? lidarTopic : null);
-  const scan = useTopicRef<any>(layers.scan ? scanTopic : null);
-  const path = useTopicRef<any>(layers.path ? pathTopic : null);
+  const odom = useTopicSnapshot<any>(layers.pose ? poseTopic : null);
+  const map = useTopicSnapshot<any>(layers.map ? mapTopic : null);
+  const lidar = useTopicSnapshot<any>(layers.lidar ? lidarTopic : null);
+  const scan = useTopicSnapshot<any>(layers.scan ? scanTopic : null);
+  const path = useTopicSnapshot<any>(layers.path ? pathTopic : null);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gl3dRef = useRef<HTMLCanvasElement>(null);

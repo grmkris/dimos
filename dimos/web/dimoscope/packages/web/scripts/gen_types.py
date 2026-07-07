@@ -76,27 +76,42 @@ def _load(path: Path) -> types.ModuleType:
     return mod
 
 
+def _add_topic(
+    topic: str,
+    ts: str | None,
+    pkgs: set[str],
+    topics: dict[str, str | None],
+    conflicts: dict[str, set[str]],
+) -> None:
+    if ts:
+        pkgs.add(ts.split(".")[0])
+    if topic in topics and topics[topic] != ts and topics[topic] is not None and ts is not None:
+        conflicts.setdefault(topic, set()).add(ts)  # keep the first; note the divergence
+    topics.setdefault(topic, ts)
+
+
 def _collect(
     mod: object,
     pkgs: set[str],
     topics: dict[str, str | None],
     conflicts: dict[str, set[str]],
     commands: dict[str, list[str]],
+    prefix: str | None = None,
 ) -> None:
     """Merge one blueprint module's PORTS (→ topics) and every own @rpc Module (→ commands) into the
-    shared accumulators. A file may contribute topics, commands, both, or neither (e.g. common.py)."""
+    shared accumulators. A file may contribute topics, commands, both, or neither (e.g. common.py).
+    With `prefix` (a `path=PREFIX` CLI arg), each Module's `Out[Msg]` class ports also become topics
+    named PREFIX+attr — for coordinator-wired blueprints that have no explicit PORTS table (the
+    coordinator names a port `odom` topic `/odom`; GO2Load's lanes get `/load/` + attr)."""
     from dimos.core.module import Module  # local import: only needed once dimos is on the path
+    from dimos.core.stream import Out
 
     # Topics: (attr, topic, MsgClass) → topic: <pkg>.<Name> (msg_name is already "pkg.Name"). PORTS is
     # optional — a blueprint may define its topics only in __main__ (bench.py); those stay untyped.
     for _attr, topic, cls in getattr(mod, "PORTS", None) or ():
         name = getattr(cls, "msg_name", None)
         ts = name if (isinstance(name, str) and "." in name) else None
-        if ts:
-            pkgs.add(ts.split(".")[0])
-        if topic in topics and topics[topic] != ts and topics[topic] is not None and ts is not None:
-            conflicts.setdefault(topic, set()).add(ts)  # keep the first; note the divergence
-        topics.setdefault(topic, ts)
+        _add_topic(topic, ts, pkgs, topics, conflicts)
 
     # Commands: EVERY Module subclass defined in this file → target: { method: { args:[T..]; ret:T } }.
     for target in vars(mod).values():
@@ -107,6 +122,18 @@ def _collect(
             and target.__module__ == mod.__name__  # type: ignore[attr-defined]
         ):
             continue
+        if prefix is not None:
+            try:
+                hints = typing.get_type_hints(target)
+            except Exception:
+                hints = dict(getattr(target, "__annotations__", {}) or {})
+            for attr, ann in hints.items():
+                if attr.startswith("_") or typing.get_origin(ann) is not Out:
+                    continue
+                (msg,) = typing.get_args(ann) or (None,)
+                name = getattr(msg, "msg_name", None)
+                ts = name if (isinstance(name, str) and "." in name) else None
+                _add_topic(prefix + attr, ts, pkgs, topics, conflicts)
         method_rows: list[str] = []
         # vars(target) = methods declared ON the blueprint (skips inherited Module @rpc plumbing whose
         # annotations reference unresolved names). Read annotations straight off the signature.
@@ -121,13 +148,14 @@ def _collect(
             commands[target.__name__] = method_rows
 
 
-def generate(paths: list[Path]) -> str:
+def generate(specs: list[tuple[Path, str | None]]) -> str:
     pkgs: set[str] = set()
     topics: dict[str, str | None] = {}  # topic → "pkg.Name" (or None for untyped)
     conflicts: dict[str, set[str]] = {}  # topic → other types seen (kept the first)
     commands: dict[str, list[str]] = {}  # target class name → its method rows
-    for path in paths:
-        _collect(_load(path), pkgs, topics, conflicts, commands)
+    paths = [p for p, _ in specs]
+    for path, prefix in specs:
+        _collect(_load(path), pkgs, topics, conflicts, commands, prefix)
 
     topic_rows: list[str] = []
     for topic, ts in topics.items():
@@ -162,11 +190,20 @@ def main() -> None:
         description="Generate merged DimosTopics/DimosCommands from one or more dimos blueprints."
     )
     ap.add_argument(
-        "blueprints", nargs="+", help="paths to blueprint .py files (e.g. scenarios/*.py)"
+        "blueprints",
+        nargs="+",
+        help="blueprint .py paths; append =PREFIX to also emit each Module's Out[...] class ports "
+        "as PREFIX+attr topics (coordinator-wired blueprints without a PORTS table, e.g. "
+        "../../robot/unitree/go2/connection.py=/ or go2_load.py=/load/)",
     )
     ap.add_argument("--out", help="write to this file instead of stdout")
     a = ap.parse_args()
-    ts = generate([Path(p) for p in a.blueprints])
+
+    def _spec(arg: str) -> tuple[Path, str | None]:
+        path, sep, prefix = arg.partition("=")
+        return Path(path), (prefix if sep else None)
+
+    ts = generate([_spec(p) for p in a.blueprints])
     if a.out:
         Path(a.out).write_text(ts)
         print(f"gen_types: wrote {a.out}", file=sys.stderr)

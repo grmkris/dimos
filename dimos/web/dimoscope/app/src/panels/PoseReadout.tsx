@@ -1,5 +1,5 @@
 // Runtime-chosen topic uses the base message-type-generic hook, not the name-keyed typed one in ../dimos.
-import { useTopicLatest } from "@dimos/react";
+import { useTopic } from "@dimos/react";
 import { useTopics } from "../dimos";
 import type { geometry_msgs } from "@dimos/msgs";
 
@@ -7,7 +7,7 @@ export function PoseReadout({ topic }: { topic?: string }) {
   const topics = useTopics();
   const poseTopic = topic ?? topics.find((t) => t.type === "geometry_msgs.PoseStamped")?.topic ??
     "/odom";
-  const { data, meta } = useTopicLatest<geometry_msgs.PoseStamped>(poseTopic, { maxHz: 15 });
+  const { data, meta } = useTopic<geometry_msgs.PoseStamped>(poseTopic, { maxHz: 15 });
   const p = data?.pose?.position;
   const o = data?.pose?.orientation;
   const yaw = o

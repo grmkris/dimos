@@ -17,11 +17,11 @@ Open http://localhost:8080/. For development against a local or remote gateway:
 
 ```bash
 deno task app
-# open http://localhost:5173/?gw=placeholder/vps
+# open http://localhost:5173/?gw=placeholder%2Fvps
 ```
 
-`placeholder/vps` means the gateway host and port, for example `localhost:8080` locally or a reachable
-VPS gateway.
+`placeholder/vps` is a placeholder, not a literal gateway. Replace it with your real gateway
+`host:port`, for example `localhost:8080` locally or a reachable VPS gateway.
 
 ## Copy Points
 
@@ -38,28 +38,26 @@ The app's other panels are the larger examples:
 
 | Goal | File | Main API |
 | --- | --- | --- |
-| Minimal panel | `src/Example.tsx` | `useStatus`, `useTopics`, `useTopicLatest` |
+| Minimal panel | `src/Example.tsx` | `useStatus`, `useTopics`, `useTopic` |
 | Typed hooks | `src/dimos.ts` | `createDimosHooks` |
-| Pose readout | `src/panels/PoseReadout.tsx` | `useTopicLatest` |
+| Pose readout | `src/panels/PoseReadout.tsx` | `useTopic` |
 | Stats | `src/panels/StatsBar.tsx` | `useTopics`, `useTopicStats` |
 | Camera | `src/panels/CameraView.tsx` | `useVideo` |
 | Teleop | `src/panels/TeleopPad.tsx` | `useTeleop` |
 | RPC buttons | `src/panels/CommandsPanel.tsx` | `useCommands`, `useRpc` |
-| Canvas/world viz | `src/panels/WorldView.tsx` | `useTopicRef` |
+| Canvas/world viz | `src/panels/WorldView.tsx` | `useTopicSnapshot` |
 | Transport switcher | `src/main.tsx` | `DimosProvider servers=`, `useServers` |
 
-## Five-Minute React App
+## React usage example
 
 ```tsx
 import { createRoot } from "react-dom/client";
-import { DimosProvider, useTopicLatest, useTopics } from "@dimos/react";
+import { DimosProvider } from "@dimos/react";
+import { useTopic, useTopics } from "./dimos";
 
 function Pose() {
   const topics = useTopics();
-  const { data, meta } = useTopicLatest<{ pose: { position: { x: number; y: number } } }>(
-    "/odom",
-    { maxHz: 10 },
-  );
+  const { data, meta } = useTopic("/nav/pose", { maxHz: 10 });
 
   return (
     <pre>
@@ -96,12 +94,12 @@ client.subscribe("/odom", (m) => console.log(m.data, m.meta.latencyMs));
 | `useServers` | Transport switcher state |
 | `useCaps` | Active transport capabilities |
 | `useTopics` | Live discovered topics |
-| `useTopicLatest` | Latest decoded message and metadata |
-| `useTopicRef` | Latest messages in a ref for render loops |
+| `useTopic` | Latest decoded message and metadata |
+| `useTopicSnapshot` | Latest messages in a ref for render loops |
 | `useTopicStats` | Passive Hz, bytes/s, latency |
-| `useTopicFeed` | Rolling inspector feed |
+| `useTopicHistory` | Rolling inspector feed |
 | `useVideo` | Negotiated camera media |
-| `useImageTopic` | Paint an image topic into a canvas |
+| `useTopicImage` | Paint an image topic into a canvas |
 | `useTeleop` | Deadman-protected velocity control |
 | `useRpc` | Call whitelisted RPC methods |
 | `useCommands` | Advertised command list |

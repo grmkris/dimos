@@ -6,15 +6,15 @@
 // topic NAMES autocomplete and message payloads fully typed below — no generics, no casts.
 // In your own app: copy src/dimos.ts + the generated dimos.topics.gen.ts. Without codegen the same
 // hooks import from "@dimos/react" and you pass the type yourself:
-//   const pose = useTopicLatest<geometry_msgs.PoseStamped>("/odom", { maxHz: 5 });
+//   const pose = useTopic<geometry_msgs.PoseStamped>("/odom", { maxHz: 5 });
 import { useState } from "react";
 import { jsonPretty } from "@dimos/react";
 import {
   useCommands,
   useModules,
   useRpc,
-  useStatus,
-  useTopicLatest,
+  useConnectionState,
+  useTopic,
   useTopics,
   useTopicStats,
 } from "./dimos";
@@ -22,14 +22,14 @@ import {
 export function Example() {
   // ── Use case 1 · connect + discover ──────────────────────────────────────────────────────────
   // Both live-update on their own; DimosProvider (see main.tsx) owns the connection.
-  const status = useStatus();
+  const status = useConnectionState();
   const topics = useTopics();
 
   // ── Use case 2 · subscribe to a specific topic, typed ────────────────────────────────────────
   // "/nav/pose" autocompletes (try renaming it), and `pose.data` IS a geometry_msgs.PoseStamped —
   // `.pose.position.x` below is checked by tsc. maxHz is server-side QoS: the gateway downsamples
   // before bytes reach the wire. The subscription lives exactly as long as this component.
-  const pose = useTopicLatest("/nav/pose", { maxHz: 5 });
+  const pose = useTopic("/nav/pose", { maxHz: 5 });
 
   // ── Use case 3 · inspect ANY discovered topic (name only known at runtime) ───────────────────
   // Payload type is unknown here by construction — render it as JSON. The maxHz select shows the
@@ -37,7 +37,7 @@ export function Example() {
   const [picked, setPicked] = useState<string>();
   const [maxHz, setMaxHz] = useState(10);
   const topic = picked ?? topics[0]?.topic ?? null;
-  const { data, meta } = useTopicLatest(topic, { maxHz });
+  const { data, meta } = useTopic(topic, { maxHz });
   const stats = useTopicStats(topic); // passive rolling window — hz / bytes/s / latency
 
   // ── Use case 4 · call RPC ─────────────────────────────────────────────────────────────────────
@@ -131,7 +131,7 @@ export function Example() {
       {/* where to look next — the app's real panels, one hook each */}
       <div className="muted small" style={{ marginTop: 12 }}>
         more: camera → useVideo (panels/CameraView.tsx) · teleop → useTeleop (panels/TeleopPad.tsx) ·
-        render loops → useTopicRef (panels/WorldView.tsx) · codegen → packages/web/README.md
+        render loops → useTopicSnapshot (panels/WorldView.tsx) · codegen → packages/web/README.md
       </div>
     </div>
   );

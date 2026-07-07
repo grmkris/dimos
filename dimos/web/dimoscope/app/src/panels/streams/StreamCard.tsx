@@ -1,7 +1,7 @@
 // One subscribed topic, live — QoS lane, hz/kB·s/latency/gap, rate sparkline, display-throttled feed; full per-topic QoS surface via resolveQos→setQos.
 import { useEffect, useState } from "react";
-import { jsonPretty, useTopicFeed } from "@dimos/react";
-import { useCaps, useDimosClient, useTopicStats } from "../../dimos";
+import { jsonPretty, useTopicHistory } from "@dimos/react";
+import { useCapabilities, useDimosClient, useTopicStats } from "../../dimos";
 import { defaultLane, type Lane, LANES, type Qos, resolveQos } from "@dimos/web";
 import { Sparkline } from "../../widgets/Sparkline";
 
@@ -51,8 +51,8 @@ export function StreamCard({ topic, type, onRemove }: {
   onRemove: () => void;
 }) {
   const client = useDimosClient();
-  const caps = useCaps();
-  const feed = useTopicFeed(topic, { maxRows: 40 });
+  const caps = useCapabilities();
+  const feed = useTopicHistory(topic, { maxRows: 40 });
   const stats = useTopicStats(topic, 250);
   const [hist, setHist] = useState<number[]>([]);
   const [peakHz, setPeakHz] = useState(0);

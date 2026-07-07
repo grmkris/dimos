@@ -1,5 +1,5 @@
 // @dimos/react — thin React bindings over @dimos/web. For high-rate topics prefer
-// useTopicRef (no re-render; read in a rAF loop) over useTopicLatest.
+// useTopicSnapshot (no re-render; read in a rAF loop) over useTopic.
 import {
   createContext,
   type MutableRefObject,
@@ -23,6 +23,9 @@ import type {
   TransportCaps,
   VideoMeta,
 } from "@dimos/web";
+
+/** Connection lifecycle values (WebSocket-readyState vocabulary, shared with @dimos/web). */
+export type ConnectionState = Status;
 
 /** One selectable transport/server: a label + a thunk that builds a connected client. */
 export interface ServerOpt {
@@ -143,7 +146,10 @@ export function DimosProvider({
 
 export const useDimos = () => useContext(Ctx);
 export const useDimosClient = () => useContext(Ctx).client;
-export const useStatus = () => useContext(Ctx).status;
+/** The client's connection lifecycle: "connecting" | "open" | "closed". */
+export const useConnectionState = (): ConnectionState => useContext(Ctx).status;
+/** @deprecated Use useConnectionState. */
+export const useStatus = useConnectionState;
 /** The transport switcher: list of servers + the active id + a setter. */
 export const useServers = () => {
   const { servers, activeId, setActiveId } = useContext(Ctx);
@@ -151,9 +157,11 @@ export const useServers = () => {
 };
 
 /** The active transport's capabilities (on-demand, discovery, qos) — for QoS-aware UI. */
-export function useCaps(): TransportCaps | null {
+export function useCapabilities(): TransportCaps | null {
   return useDimosClient()?.caps ?? null;
 }
+/** @deprecated Use useCapabilities. */
+export const useCaps = useCapabilities;
 
 // Stable empty snapshots for the disconnected case — useSyncExternalStore compares snapshots by
 // reference, so returning a fresh `[]` each call would loop.
@@ -196,13 +204,16 @@ export function useTopics(): TopicInfo[] {
   return useClientStore((c) => c.listTopics(), (c, cb) => c.onTopics(cb), NO_TOPICS);
 }
 
+export type TopicSample<T = unknown> = { data?: T; meta?: MessageMeta };
+export type TopicSnapshot<T = unknown> = MutableRefObject<TopicSample<T>>;
+
 /** Latest message for a topic; re-renders on each delivery (use maxHz for high-rate). */
-export function useTopicLatest<T = unknown>(
+export function useTopic<T = unknown>(
   topic: string | null,
   opts?: { maxHz?: number },
-): { data?: T; meta?: MessageMeta } {
+): TopicSample<T> {
   const client = useDimosClient();
-  const [state, setState] = useState<{ data?: T; meta?: MessageMeta }>({});
+  const [state, setState] = useState<TopicSample<T>>({});
   const maxHz = opts?.maxHz;
   useEffect(() => {
     setState({}); // clear stale data from the previous topic on switch
@@ -216,11 +227,11 @@ export function useTopicLatest<T = unknown>(
 }
 
 /** A ref updated on every message WITHOUT re-rendering — read it in a rAF loop (canvas). */
-export function useTopicRef<T = unknown>(
+export function useTopicSnapshot<T = unknown>(
   topic: string | null,
-): MutableRefObject<{ data?: T; meta?: MessageMeta }> {
+): TopicSnapshot<T> {
   const client = useDimosClient();
-  const ref = useRef<{ data?: T; meta?: MessageMeta }>({});
+  const ref = useRef<TopicSample<T>>({});
   useEffect(() => {
     ref.current = {}; // clear stale data from the previous topic on switch
     if (!client || !topic) return;
@@ -273,38 +284,39 @@ export interface FeedRow {
   seq?: number;
   preview: string;
 }
-export interface TopicFeed {
+export interface TopicHistory<T = unknown> {
   /** Oldest→newest sampled rows (≤ maxRows). */
   rows: FeedRow[];
   /** The most recent full message (for an expand-to-JSON view). */
-  latest?: { data: unknown; meta: MessageMeta };
+  latest?: { data: T; meta: MessageMeta };
   /** Source-sequence gap over the delivered stream, %: rises when the gateway sheds (or a client
    *  rate-limit drops) messages. null when the topic carries no numeric seq. */
   lossPct: number | null;
 }
+export type TopicFeed<T = unknown> = TopicHistory<T>;
 
 /** Subscribe to a topic and expose a rolling, display-throttled feed of its recent messages. */
-export function useTopicFeed(
+export function useTopicHistory<T = unknown>(
   topic: string | null,
   opts?: { maxRows?: number; displayHz?: number },
-): TopicFeed {
+): TopicHistory<T> {
   const client = useDimosClient();
   const maxRows = opts?.maxRows ?? 50;
   const displayHz = opts?.displayHz ?? 12;
-  const [feed, setFeed] = useState<TopicFeed>({ rows: [], lossPct: null });
+  const [feed, setFeed] = useState<TopicHistory<T>>({ rows: [], lossPct: null });
   useEffect(() => {
     setFeed({ rows: [], lossPct: null }); // clear on topic switch
     if (!client || !topic) return;
     const ring: FeedRow[] = [];
     let nextId = 0; // stable, monotonic row id → a steady React key (no per-flush remount)
-    let latest: { data: unknown; meta: MessageMeta } | undefined;
+    let latest: { data: T; meta: MessageMeta } | undefined;
     let pending = false; // a new message arrived since the last flush
     let seqMin: number | undefined;
     let seqMax: number | undefined;
     let seqCount = 0;
     let lastSeq: number | undefined;
     const sub = client.topic(topic).subscribe((m) => {
-      latest = { data: m.data, meta: m.meta };
+      latest = { data: m.data as T, meta: m.meta };
       pending = true;
       const s = m.meta.seq;
       if (s != null) {
@@ -366,7 +378,7 @@ export interface ImageInfo {
  * rgb8/bgr8/mono8/rgba8/bgra8). Returns a ref to attach to a <canvas>, plus live
  * info (dims/encoding/fps). Decodes off the React render path (rAF + on-message).
  */
-export function useImageTopic(topic: string | null, opts?: { maxFps?: number }) {
+export function useTopicImage(topic: string | null, opts?: { maxFps?: number }) {
   const client = useDimosClient();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [info, setInfo] = useState<ImageInfo | null>(null);
@@ -707,7 +719,7 @@ export function SubscribeBar() {
 }
 
 function PinnedTopic({ topic, onRemove }: { topic: string; onRemove: () => void }) {
-  const { data, meta } = useTopicLatest<unknown>(topic, { maxHz: 4 });
+  const { data, meta } = useTopic<unknown>(topic, { maxHz: 4 });
   const stats = useTopicStats(topic);
   const live = !!meta;
   // short one-line preview of the latest value.
@@ -830,23 +842,55 @@ export function createDimosHooks<TMap, TCmds = Record<never, never>>() {
     useModules: (() => useDimosClient()?.modules ?? null) as unknown as () =>
       | DimosClient<TMap, TCmds>["modules"]
       | null,
-    useTopicLatest: useTopicLatest as unknown as <K extends NameKey<TMap>>(
+    useTopic: useTopic as unknown as <K extends NameKey<TMap>>(
       topic: K | null,
       opts?: { maxHz?: number },
-    ) => { data?: MsgFor<TMap, K>; meta?: MessageMeta },
-    useTopicRef: useTopicRef as unknown as <K extends NameKey<TMap>>(
+    ) => TopicSample<MsgFor<TMap, K>>,
+    useTopicSnapshot: useTopicSnapshot as unknown as <K extends NameKey<TMap>>(
       topic: K | null,
-    ) => MutableRefObject<{ data?: MsgFor<TMap, K>; meta?: MessageMeta }>,
+    ) => TopicSnapshot<MsgFor<TMap, K>>,
     useTopicStats: useTopicStats as unknown as <K extends NameKey<TMap>>(
       topic: K | null,
       pollMs?: number,
     ) => TopicStats | null,
-    useImageTopic: useImageTopic as unknown as <K extends NameKey<TMap>>(
+    useTopicHistory: useTopicHistory as unknown as <K extends NameKey<TMap>>(
+      topic: K | null,
+      opts?: { maxRows?: number; displayHz?: number },
+    ) => TopicHistory<MsgFor<TMap, K>>,
+    useTopicImage: useTopicImage as unknown as <K extends NameKey<TMap>>(
       topic: K | null,
       opts?: { maxFps?: number },
-    ) => ReturnType<typeof useImageTopic>,
+    ) => ReturnType<typeof useTopicImage>,
+    /** @deprecated Use useTopic. */
+    useTopicLatest: useTopic as unknown as <K extends NameKey<TMap>>(
+      topic: K | null,
+      opts?: { maxHz?: number },
+    ) => TopicSample<MsgFor<TMap, K>>,
+    /** @deprecated Use useTopicSnapshot. */
+    useTopicRef: useTopicSnapshot as unknown as <K extends NameKey<TMap>>(
+      topic: K | null,
+    ) => TopicSnapshot<MsgFor<TMap, K>>,
+    /** @deprecated Use useTopicHistory. */
+    useTopicFeed: useTopicHistory as unknown as <K extends NameKey<TMap>>(
+      topic: K | null,
+      opts?: { maxRows?: number; displayHz?: number },
+    ) => TopicHistory<MsgFor<TMap, K>>,
+    /** @deprecated Use useTopicImage. */
+    useImageTopic: useTopicImage as unknown as <K extends NameKey<TMap>>(
+      topic: K | null,
+      opts?: { maxFps?: number },
+    ) => ReturnType<typeof useTopicImage>,
   };
 }
+
+/** @deprecated Use useTopic. */
+export const useTopicLatest = useTopic;
+/** @deprecated Use useTopicSnapshot. */
+export const useTopicRef = useTopicSnapshot;
+/** @deprecated Use useTopicHistory. */
+export const useTopicFeed = useTopicHistory;
+/** @deprecated Use useTopicImage. */
+export const useImageTopic = useTopicImage;
 
 export type {
   CommandInfo,

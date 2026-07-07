@@ -6,18 +6,18 @@ import type { DimosCommands, DimosTopics } from "./dimos.topics.gen.ts";
 export const {
   useDimosClient,
   useModules,
-  useTopicLatest,
-  useTopicRef,
+  useTopic,
+  useTopicSnapshot,
   useTopicStats,
 } = createDimosHooks<DimosTopics, DimosCommands>();
 
 // Map-agnostic hooks re-exported so `../dimos` is the one import site for every panel.
 export {
-  useCaps,
+  useCapabilities,
   useCommands,
   useRpc,
   useServers,
-  useStatus,
+  useConnectionState,
   useTeleop,
   useTopics,
   useVideo,

@@ -6,7 +6,7 @@
 // back to a 2D top-down render if WebGL is unavailable, and to wire-stats-only if draco3d is absent.
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { TopicInfo } from "@dimos/react";
-import { useTopicRef, useTopics, useTopicStats } from "../../dimos";
+import { useTopicSnapshot, useTopics, useTopicStats } from "../../dimos";
 import { DRACO_TYPE, type TopicStats } from "@dimos/web";
 import { decodeDracoGeometry } from "./dracoDecode";
 import { type CloudLike, cloudExtent, cloudToXYZ, drawCloud, synthCloud } from "./drawCloud";
@@ -93,9 +93,9 @@ export function CloudCompare() {
   const dsTopic = activeBase ? activeBase + "_ds" : null;
   const drTopic = activeBase ? activeBase + "_draco" : null;
 
-  const raw = useTopicRef<any>(activeBase);
-  const ds = useTopicRef<any>(dsTopic);
-  const dr = useTopicRef<any>(drTopic);
+  const raw = useTopicSnapshot<any>(activeBase);
+  const ds = useTopicSnapshot<any>(dsTopic);
+  const dr = useTopicSnapshot<any>(drTopic);
 
   const rawStats = useTopicStats(activeBase ?? "");
   const dsStats = useTopicStats(dsTopic ?? "");
