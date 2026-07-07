@@ -14,10 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""GO2Load — the one synthetic load module behind the dimoscope dog demo.
+"""GO2Load — the synthetic load module behind the dimoscope dog demo.
 
-Merges the former ScopeBench (fixed multi-rate lanes; the QoS / on-demand demo) and BenchLoad (a
-crankable heavy flood; the transport crash-ladder benchmark) into ONE module on ONE /load/* namespace:
+Publishes fixed multi-rate lanes and a crankable heavy flood on one /load/* namespace:
 
   /load/fast   PoseStamped   100 Hz   light, high-rate      ┐
   /load/mid    PoseStamped    20 Hz   mid                   │ fixed lanes — a spread of QoS lanes the
@@ -30,8 +29,8 @@ Two RPC surfaces, both browser-driven (Commands buttons / client.call), both ove
   start_all / stop_all / enable(t) / disable(t) / set_rate(t, hz) / status()   — the fixed lanes
   start_bench(heavy_hz, heavy_bytes, heavy_kind) / stop_bench()                — the /load/img flood
 
-Composed with unitree_go2 into the SINGLE registered dog blueprint `go2-load`; also exported standalone
-as `load` (no sim) for benchmarking without the dimsim/dog stack:
+Composed with unitree_go2 into the registered dog blueprint `go2-load`; also exported standalone as
+`load` (no sim) for benchmarking without the dimsim/dog stack:
 
   DIMOS_TRANSPORT=zenoh uv run dimos --simulation dimsim run go2-load   # the dog (deno task dog)
   DIMOS_TRANSPORT=zenoh uv run dimos run load                          # standalone flood, no sim
@@ -322,5 +321,14 @@ _LOAD_TRANSPORTS = {
 # THE dog: teleoperable go2 dimsim + our multi-rate /load/* lanes + the crankable flood, one name.
 go2_load = autoconnect(unitree_go2, GO2Load.blueprint().transports(_LOAD_TRANSPORTS))
 
-# Standalone (no sim) — the lighter interactive-benchmark source (coordinator-wired, RPC-controllable).
+# Standalone (no sim) benchmark source with RPC controls.
 load = GO2Load.blueprint().transports(_LOAD_TRANSPORTS)
+
+PORTS = [
+    ("fast", "/load/fast", PoseStamped),
+    ("mid", "/load/mid", PoseStamped),
+    ("slow", "/load/slow", PoseStamped),
+    ("grid", "/load/grid", OccupancyGrid),
+    ("cloud", "/load/cloud", PointCloud2),
+    ("img", "/load/img", Image),
+]

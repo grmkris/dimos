@@ -1,7 +1,7 @@
 # dimoscope Benchmarks, QoS, and Runbook
 
 This is the canonical benchmark record for dimoscope. It keeps the current conclusions and enough
-methodology to reproduce them; dated raw run logs were folded into this page.
+methodology to reproduce them.
 
 The load source is `go2-load` (`dimos/robot/benchmark/go2_load.py`): small `/load/{fast,mid,slow}`
 lanes, structured `/load/{grid,cloud}`, and a crankable `/load/img` flood controlled by
@@ -29,12 +29,12 @@ WebTransport for camera, then fall back through WebSocket/WebRTC/JPEG for reacha
 reason to expose WebRTC data is comparison, UDP-path coverage, and browser-to-browser style future
 work.
 
-## Latest WAN Results (2026-07-07)
+## Current WAN Results
 
 Setup: browser = headless Chrome-for-Testing on a Mac (`scripts/bench-headless.ts`, anti-throttle
 flags), gateway + wt-sidecar + `deno task dog:vps` on the company VPS (4 vCPU Debian, roughly 25 ms
-RTT, netem on the box via `NETEM_CTL=1`). The source was MuJoCo headless/EGL with video at 5 fps and
-lidar at 1 fps. One 15 s cell per row; netem profiles were applied server-side.
+RTT, netem on the box via `NETEM_CTL=1`). The source is MuJoCo headless/EGL with video at 5 fps and
+lidar at 1 fps. Each row uses one 15 s cell; netem profiles apply server-side.
 
 Reproduce any row. `placeholder%2Fvps` is a placeholder, not a literal gateway; replace it with the
 URL-encoded gateway `host:port`.
@@ -111,7 +111,7 @@ at 2.7 Hz with 4 s p95. Compression helps bandwidth; only the transport fixes lo
 
 ### Camera video
 
-Source: MuJoCo headless camera on the VPS. The 4 vCPU EGL render sustained roughly 3.5-3.9 fps of the
+Source: MuJoCo headless camera on the VPS. The 4 vCPU EGL render sustains roughly 3.5-3.9 fps of the
 5 fps target, so all modes are source-limited and the useful column is glass-to-glass age.
 
 | mode | draw fps | glass-to-glass age |
@@ -122,8 +122,8 @@ Source: MuJoCo headless camera on the VPS. The 4 vCPU EGL render sustained rough
 
 Reading: over a 25 ms RTT WAN the H.264 path shows roughly 25-70 ms of glass-to-glass age. The single
 788 ms spike in the webcodecs run is a shed-to-IDR resync; `?smooth=150` trades that spikiness for a
-constant 150 ms when watching replays. Gateway-side WebRTC media was excluded because it did not ICE
-over a raw-IP WAN in this setup; use JPEG/WebCodecs there.
+constant 150 ms when watching replays. Gateway-side WebRTC media does not ICE over a raw-IP WAN in
+this setup; use JPEG/WebCodecs there.
 
 ## Browser Benchmark
 
@@ -245,29 +245,29 @@ Clean localhost measurements at 10 Hz:
 | WT | `_ds` | 9.33 | 293 | 10.0x smaller | 1.9 ms |
 | WT | `_draco` | 9.33 | 481 | 6.1x smaller | 9.4 ms |
 
-On a structured lidar scan, Draco measured about 7.4x smaller while preserving the full point count.
+On a structured lidar scan, Draco is about 7.4x smaller while preserving the full point count.
 The Clouds tab renders raw, downsampled, and Draco versions side-by-side in a shared three.js orbit
 view; WorldView can switch lidar between raw, `_ds`, and `_draco`.
 
 ## Camera Latency
 
 Raw Go2 camera frames are about 2.76 MB at 14 Hz, or roughly 39 MB/s. Loopback hides that cost; a
-real 100 Mbit path does not. The gateway image/media fixes are:
+real 100 Mbit path does not. The gateway image/media path:
 
-- republish raw `Image` as `<topic>_jpeg` with TurboJPEG.
-- use freshest-wins ingest for media, image, and cloud transcode planes.
-- keep one client-side JPEG decode in flight.
-- set WebRTC receiver playout/jitter hints to zero for low-latency robot video.
-- choose WebCodecs first when available, then WebRTC media, then JPEG.
+- republishes raw `Image` as `<topic>_jpeg` with TurboJPEG.
+- uses freshest-wins ingest for media, image, and cloud transcode planes.
+- keeps one client-side JPEG decode in flight.
+- sets WebRTC receiver playout/jitter hints to zero for low-latency robot video.
+- chooses WebCodecs first when available, then WebRTC media, then JPEG.
 
-Measured on a 100 Mbit throttled link:
+Current 100 Mbit throttled-link behavior:
 
-| Mode | Before | After |
-| --- | --- | --- |
-| JPEG topic | 3.3 fps, 387-502 ms rising, link saturated | 14.2 fps, about 8 ms flat, about 1 MB/s |
-| WebCodecs | 14 fps, about 20 ms | 14.3 fps, about 13 ms |
-| WebRTC media | 12.7 fps, 46-71 ms jitter buffer | 14.2 fps, 9-19 ms jitter buffer |
-| Auto | WebRTC | WebCodecs when supported |
+| Mode | Current behavior |
+| --- | --- |
+| JPEG topic | 14.2 fps, about 8 ms flat, about 1 MB/s |
+| WebCodecs | 14.3 fps, about 13 ms |
+| WebRTC media | 14.2 fps, 9-19 ms jitter buffer |
+| Auto | WebCodecs when supported |
 
 WebCodecs over WebTransport (`webTransportWebCodecsMedia`, dedicated media WT session): first-load
 14.3 fps at 7-9 ms age with zero TCP. In `auto` and explicit `webtransport` modes, data and video
@@ -276,17 +276,16 @@ connection. It falls back to the `/media` WS mid-chain, then WebRTC, then JPEG.
 
 ## Adaptive Bitrate
 
-The H.264 encoder is otherwise blind — fixed CRF regardless of what the link carries; past that
-point every transport can only queue or shed. `gateway/abr.py` runs a per-topic CRF ladder (rung 0 =
-`MEDIA_H264_CRF`, +5 per rung ≈ half the bits): a fanout shed or a stalled viewer steps quality
-down (at most once per 3 s), 15 s of clean delivery steps it back up. Slow WS viewers get frames
-skipped (one in-flight send each, forced IDR on rejoin) rather than evicted.
+`gateway/abr.py` runs a per-topic CRF ladder (rung 0 = `MEDIA_H264_CRF`, +5 per rung ≈ half the bits):
+a fanout shed or a stalled viewer steps quality down at most once per 3 s, and 15 s of clean delivery
+steps it back up. Slow WS viewers get frames skipped with one in-flight send each and a forced IDR on
+rejoin.
 
-Measured, 2 Mbit cap, WebCodecs over WS, 90 s: ABR off → 1.7 fps then 0 fps (dead, age frozen at
-5 s); ABR on → 11.5-15 fps sustained, ladder hunts CRF 20↔35 around capacity, wire settles at the
-pipe rate (~250 kB/s). Age under full saturation floats at seconds — kernel TCP socket buffering
-below the app — so the picture degrades to blurrier-but-live instead of sharp-but-frozen. Knobs:
-`VIDEO_ABR=0` disables, `VIDEO_ABR_LADDER="23,28,33,38"` overrides the rungs.
+At a 2 Mbit cap with WebCodecs over WS, ABR sustains 11.5-15 fps, hunts CRF 20↔35 around capacity,
+and settles wire usage near the pipe rate (~250 kB/s). Age under full saturation floats at seconds
+because kernel TCP socket buffering sits below the app, so the picture degrades to blurrier-but-live
+instead of sharp-but-frozen. Knobs: `VIDEO_ABR=0` disables ABR, and
+`VIDEO_ABR_LADDER="23,28,33,38"` overrides the rungs.
 
 ## Network Shaping
 

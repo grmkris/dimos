@@ -86,16 +86,12 @@ export function App() {
 ```
 
 The reference app's typed binding lives in `app/src/dimos.ts`, where `useTopic("/nav/pose")` infers
-`geometry_msgs.PoseStamped` from the generated topic map. Older names such as `useTopicLatest` remain
-as compatibility aliases, but new code should use the names above. For the complete hook walkthrough,
-copy points, and Vite package aliases, see [`../../app/README.md`](../../app/README.md).
+`geometry_msgs.PoseStamped` from the generated topic map. For the complete hook walkthrough, copy
+points, and Vite package aliases, see [`../../app/README.md`](../../app/README.md).
 
 ## What Codegen Reads
 
 - Topics: module-level `PORTS = [(attr, topic, MsgClass), ...]`.
-- Topics, coordinator-wired form: pass `path.py=PREFIX` and every `Out[Msg]` class attribute on the
-  file's `Module` subclasses becomes the topic `PREFIX+attr` (the go2 blueprint's `odom: Out[PoseStamped]`
-  → `/odom`; GO2Load's lanes → `/load/fast` …).
 - Commands: `@rpc` methods on `Module` subclasses.
 - Message types: `MsgClass.msg_name`, imported from `@dimos/msgs`.
 

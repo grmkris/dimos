@@ -5,8 +5,7 @@ import { createDimosHooks } from "./index.tsx";
 
 type Fixture = { "/odom": { x: number } };
 
-const { useTopic, useTopicHistory, useTopicSnapshot, useTopicLatest, useTopicRef } =
-  createDimosHooks<Fixture>();
+const { useTopic, useTopicHistory, useTopicImage, useTopicSnapshot } = createDimosHooks<Fixture>();
 
 function _component() {
   // ① known key → data inferred as the mapped message type
@@ -26,9 +25,6 @@ function _component() {
   const history = useTopicHistory("/odom");
   const _hx: { x: number } | undefined = history.latest?.data;
 
-  // deprecated aliases stay typed during the transition
-  const { data: aliasData } = useTopicLatest("/odom");
-  const _aliasPose: { x: number } | undefined = aliasData;
-  const aliasRef = useTopicRef("/odom");
-  const _aliasRx: { x: number } | undefined = aliasRef.current.data;
+  const image = useTopicImage("/odom");
+  const _canvas: HTMLCanvasElement | null = image.canvasRef.current;
 }

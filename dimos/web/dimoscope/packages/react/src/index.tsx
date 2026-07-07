@@ -148,8 +148,6 @@ export const useDimos = () => useContext(Ctx);
 export const useDimosClient = () => useContext(Ctx).client;
 /** The client's connection lifecycle: "connecting" | "open" | "closed". */
 export const useConnectionState = (): ConnectionState => useContext(Ctx).status;
-/** @deprecated Use useConnectionState. */
-export const useStatus = useConnectionState;
 /** The transport switcher: list of servers + the active id + a setter. */
 export const useServers = () => {
   const { servers, activeId, setActiveId } = useContext(Ctx);
@@ -160,8 +158,6 @@ export const useServers = () => {
 export function useCapabilities(): TransportCaps | null {
   return useDimosClient()?.caps ?? null;
 }
-/** @deprecated Use useCapabilities. */
-export const useCaps = useCapabilities;
 
 // Stable empty snapshots for the disconnected case — useSyncExternalStore compares snapshots by
 // reference, so returning a fresh `[]` each call would loop.
@@ -293,7 +289,6 @@ export interface TopicHistory<T = unknown> {
    *  rate-limit drops) messages. null when the topic carries no numeric seq. */
   lossPct: number | null;
 }
-export type TopicFeed<T = unknown> = TopicHistory<T>;
 
 /** Subscribe to a topic and expose a rolling, display-throttled feed of its recent messages. */
 export function useTopicHistory<T = unknown>(
@@ -861,36 +856,8 @@ export function createDimosHooks<TMap, TCmds = Record<never, never>>() {
       topic: K | null,
       opts?: { maxFps?: number },
     ) => ReturnType<typeof useTopicImage>,
-    /** @deprecated Use useTopic. */
-    useTopicLatest: useTopic as unknown as <K extends NameKey<TMap>>(
-      topic: K | null,
-      opts?: { maxHz?: number },
-    ) => TopicSample<MsgFor<TMap, K>>,
-    /** @deprecated Use useTopicSnapshot. */
-    useTopicRef: useTopicSnapshot as unknown as <K extends NameKey<TMap>>(
-      topic: K | null,
-    ) => TopicSnapshot<MsgFor<TMap, K>>,
-    /** @deprecated Use useTopicHistory. */
-    useTopicFeed: useTopicHistory as unknown as <K extends NameKey<TMap>>(
-      topic: K | null,
-      opts?: { maxRows?: number; displayHz?: number },
-    ) => TopicHistory<MsgFor<TMap, K>>,
-    /** @deprecated Use useTopicImage. */
-    useImageTopic: useTopicImage as unknown as <K extends NameKey<TMap>>(
-      topic: K | null,
-      opts?: { maxFps?: number },
-    ) => ReturnType<typeof useTopicImage>,
   };
 }
-
-/** @deprecated Use useTopic. */
-export const useTopicLatest = useTopic;
-/** @deprecated Use useTopicSnapshot. */
-export const useTopicRef = useTopicSnapshot;
-/** @deprecated Use useTopicHistory. */
-export const useTopicFeed = useTopicHistory;
-/** @deprecated Use useTopicImage. */
-export const useImageTopic = useTopicImage;
 
 export type {
   CommandInfo,

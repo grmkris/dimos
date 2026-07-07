@@ -38,7 +38,7 @@ The app's other panels are the larger examples:
 
 | Goal | File | Main API |
 | --- | --- | --- |
-| Minimal panel | `src/Example.tsx` | `useStatus`, `useTopics`, `useTopic` |
+| Minimal panel | `src/Example.tsx` | `useConnectionState`, `useTopics`, `useTopic` |
 | Typed hooks | `src/dimos.ts` | `createDimosHooks` |
 | Pose readout | `src/panels/PoseReadout.tsx` | `useTopic` |
 | Stats | `src/panels/StatsBar.tsx` | `useTopics`, `useTopicStats` |
@@ -90,9 +90,9 @@ client.subscribe("/odom", (m) => console.log(m.data, m.meta.latencyMs));
 | --- | --- |
 | `DimosProvider` | Provides a client; `url` shorthand or a `servers` list |
 | `useDimosClient` | Raw client, or `null` before connect |
-| `useStatus` | `"connecting" | "open" | "closed"` |
+| `useConnectionState` | `"connecting" | "open" | "closed"` |
 | `useServers` | Transport switcher state |
-| `useCaps` | Active transport capabilities |
+| `useCapabilities` | Active transport capabilities |
 | `useTopics` | Live discovered topics |
 | `useTopic` | Latest decoded message and metadata |
 | `useTopicSnapshot` | Latest messages in a ref for render loops |
