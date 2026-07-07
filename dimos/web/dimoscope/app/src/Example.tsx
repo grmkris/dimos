@@ -1,5 +1,5 @@
 // Example — the copy-me panel: each common SDK use case as one small block. Live at ?tab=example ·
-// walkthrough: docs/webapp-guide.md.
+// walkthrough: app/README.md.
 //
 // Every hook comes from ./dimos — the app's one-file typed binding (src/dimos.ts) over the topic +
 // command maps that `deno task gen-types` writes from the blueprints. That binding is what makes
@@ -54,7 +54,7 @@ export function Example() {
   return (
     <div className="panel" style={{ maxWidth: 760, margin: "0 auto" }}>
       <div className="panel-title">
-        Example · the copy-me panel (app/src/Example.tsx · docs/webapp-guide.md)
+        Example · the copy-me panel (app/src/Example.tsx · app/README.md)
       </div>
       <div className="muted small">
         transport: {status} · {topics.length} topics discovered

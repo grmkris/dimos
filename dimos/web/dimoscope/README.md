@@ -67,7 +67,7 @@ sub.unsubscribe();
 Also available: `client.teleop(lin, ang)`, `client.subscribeAll(cb)`, `client.topic(name)`,
 `client.modules.<Module>.<rpc>()`, and typed clients generated from blueprint sources. See
 [`packages/web/README.md`](packages/web/README.md) for typed topic/RPC codegen and
-[`docs/webapp-guide.md`](docs/webapp-guide.md) for the React guide.
+[`app/README.md`](app/README.md) for the reference app and React guide.
 
 ## Gateway and Transports
 
@@ -106,9 +106,9 @@ verdict is:
 | Bulk at 5% loss | 9-11 MB/s | collapses without BBR | near zero |
 | Fast lane beside flood | p95 0.28-0.48 s on shaped links | can collapse behind TCP bulk | parity on shaped links, poor under loss |
 
-Use WebTransport for robot data where UDP is available, WebRTC for camera media, and WebSocket as
-the reachability fallback. Full methodology, QoS model, current transport/video/cloud numbers, VPS
-runbook, env reference, and copy-paste preset URLs live in
+Use WebTransport for robot data where UDP is available, WebCodecs/H.264 over WebTransport for camera
+where available, and WebSocket/WebRTC/JPEG as reachability fallbacks. Full methodology, QoS model,
+current transport/video/cloud numbers, VPS runbook, env reference, and copy-paste preset URLs live in
 [`docs/benchmarks.md`](docs/benchmarks.md#preset-urls).
 
 ## Development
@@ -123,7 +123,21 @@ deno task fmt && deno task lint
 Useful docs:
 
 - [`docs/benchmarks.md`](docs/benchmarks.md): measurements, QoS, netem, runbook.
-- [`docs/webapp-guide.md`](docs/webapp-guide.md): build your own React app on the SDK.
-- [`docs/status.md`](docs/status.md): current caveats and deferred work.
+- [`app/README.md`](app/README.md): reference app panels, hooks, and app-building guide.
+- [`packages/web/README.md`](packages/web/README.md): SDK, typed topic/RPC codegen, hook surface.
 - [`scenarios/README.md`](scenarios/README.md): navigation, arm, camera publisher scenarios.
 - [`gateway/wt-sidecar/README.md`](gateway/wt-sidecar/README.md): Rust sidecar notes.
+
+## Caveats
+
+- Safari and Firefox do not provide stable WebTransport. `auto` falls back to WebSocket there, which
+  keeps reachability but loses QUIC lane isolation.
+- WebTransport and WebRTC data need the Rust sidecar. WS/SSE/poll continue to work without it; `/cert`
+  returns 503 until the sidecar writes its certificate hash.
+- Auth and TLS are out of scope for this prototype. Treat it as LAN/VPN/VPS-behind-firewall software.
+- `@dimos/web` and `@dimos/react` are workspace packages, not published packages yet. Use the
+  workspace packages or vendor/alias them as described in [`app/README.md`](app/README.md).
+- The SDK intentionally does not fully match the upstream web API proposal yet. Remaining convergence:
+  `Dimos.connect(...)`, injectable decode, QoS naming, `m.stream`, and topic allow/deny lists.
+- Multi-robot namespacing is not designed here. The gateway currently assumes one logical DimOS topic
+  namespace.

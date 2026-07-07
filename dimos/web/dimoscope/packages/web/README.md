@@ -63,6 +63,31 @@ The untyped escape hatch remains available:
 await dimos.call("ScopeNav", "navigate_to", goal);
 ```
 
+## React Hooks
+
+`@dimos/react` wraps the same client for app code:
+
+```tsx
+import { DimosProvider, useTopicLatest, useTopicStats } from "@dimos/react";
+
+function Pose() {
+  const pose = useTopicLatest("/nav/pose", { maxHz: 5 });
+  const stats = useTopicStats("/nav/pose");
+  return <pre>{JSON.stringify({ pose: pose.data, stats }, null, 2)}</pre>;
+}
+
+export function App() {
+  return (
+    <DimosProvider url="ws://localhost:8080">
+      <Pose />
+    </DimosProvider>
+  );
+}
+```
+
+The reference app's typed binding lives in `app/src/dimos.ts`. For the complete hook walkthrough,
+copy points, and Vite package aliases, see [`../../app/README.md`](../../app/README.md).
+
 ## What Codegen Reads
 
 - Topics: module-level `PORTS = [(attr, topic, MsgClass), ...]`.

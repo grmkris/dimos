@@ -247,7 +247,7 @@ export function App() {
         </div>
       )}
 
-      {/* Example tab: the copy-me reference panel for building your own app (docs/webapp-guide.md). */}
+      {/* Example tab: the copy-me reference panel for building your own app (app/README.md). */}
       {tab === "example" && (
         <div className="streams-full">
           <Example />
